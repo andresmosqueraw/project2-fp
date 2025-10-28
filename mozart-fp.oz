@@ -135,15 +135,54 @@ fun {GraphGeneration ProgramStr}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 4 – Tests
+%% STEP 4 – Pretty Printing Functions
+%% ────────────────────────────────────────────────
+
+proc {PrintProgram Prog}
+   {System.showInfo "=== PROGRAM GRAPH ==="}
+   {System.showInfo "Function: "#{Value.toVirtualString Prog.function 0 0}}
+   {System.showInfo "Arguments: "#{Value.toVirtualString Prog.args 0 0}}
+   {System.showInfo "Body: "#{Value.toVirtualString Prog.body 0 0}}
+   {System.showInfo "Call: "#{Value.toVirtualString Prog.call 0 0}}
+   {System.showInfo ""}
+end
+
+proc {PrintRedex R}
+   {System.showInfo "=== REDEX ANALYSIS ==="}
+   {System.showInfo "Status: "#{Value.toVirtualString R.status 0 0}}
+   {System.showInfo "Kind: "#{Value.toVirtualString R.kind 0 0}}
+   {System.showInfo "Head: "#{Value.toVirtualString R.head 0 0}}
+   {System.showInfo "Arity: "#{Value.toVirtualString R.arity 0 0}}
+   if {HasFeature R args} then
+      {System.showInfo "Args: "#{Value.toVirtualString R.args 0 0}}
+   end
+   if {HasFeature R rest} then
+      {System.showInfo "Rest: "#{Value.toVirtualString R.rest 0 0}}
+   end
+   {System.showInfo "All Args: "#{Value.toVirtualString R.allargs 0 0}}
+   {System.showInfo "Apps: "#{Value.toVirtualString R.apps 0 0}}
+   {System.showInfo ""}
+end
+
+proc {PrintResult R}
+   {System.showInfo "=== RESULT ==="}
+   {System.showInfo "Final Value: "#{Value.toVirtualString R 0 0}}
+   {System.showInfo "========================================="}
+   {System.showInfo ""}
+end
+
+%% ────────────────────────────────────────────────
+%% STEP 5 – Tests
 %% ────────────────────────────────────────────────
 
 local G1 G2 in
+   {System.showInfo "TEST 1: square square 3"}
    G1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
-   {Show G1}
+   {PrintProgram G1}
 
+   {System.showInfo "TEST 2: twice 5"}
    G2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
-   {Show G2}
+   {PrintProgram G2}
 end
 
 
@@ -237,31 +276,37 @@ fun {IsPrimitive Op}
     end
  end
  
- %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
- %% 🔬 Tests de Task 2
- %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
- 
- local P1 R1 P2 R2 P3 R3 in
-    %% square square 3
-    P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
-    R1 = {NextReduction P1}
-    {Show P1}
-    {Show R1}
- 
-    %% twice 5
-    P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
-    R2 = {NextReduction P2}
-    {Show P2}
-    {Show R2}
- 
-    %% + 2 (falta arg) → WHNF sobre primitiva
-    P3 = prog(function:'f' args:[x]
-              body:leaf(var:x)
-              call:app(function:leaf(var:'+') arg:leaf(num:2)))
-    R3 = {NextReduction P3}
-    {Show P3}
-    {Show R3}
- end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 🔬 Tests de Task 2
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+local P1 R1 P2 R2 P3 R3 in
+   {System.showInfo "TASK 2: NextReduction Tests"}
+   {System.showInfo "========================================="}
+   
+   %% square square 3
+   {System.showInfo "TEST 1: square square 3"}
+   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   R1 = {NextReduction P1}
+   {PrintProgram P1}
+   {PrintRedex R1}
+
+   %% twice 5
+   {System.showInfo "TEST 2: twice 5"}
+   P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+   R2 = {NextReduction P2}
+   {PrintProgram P2}
+   {PrintRedex R2}
+
+   %% + 2 (falta arg) → WHNF sobre primitiva
+   {System.showInfo "TEST 3: + 2 (missing argument → WHNF)"}
+   P3 = prog(function:'f' args:[x]
+             body:leaf(var:x)
+             call:app(function:leaf(var:'+') arg:leaf(num:2)))
+   R3 = {NextReduction P3}
+   {PrintProgram P3}
+   {PrintRedex R3}
+end
  
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -380,28 +425,38 @@ end
 %% 🔬 Tests Task 3
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-local P1 S1 P2 S2 P3 S3 in
+local P1 S1 P2 S2 S2_2 P3 S3 in
+   {System.showInfo "TASK 3: Reduce (One Step) Tests"}
+   {System.showInfo "========================================="}
+   
    %% 1) (square square) 3 → ( (square 3) * (square 3) )
+   {System.showInfo "TEST 1: (square square) 3 → ( (square 3) * (square 3) )"}
    P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
    S1 = {Reduce P1}
-   {Show P1}
-   {Show S1}
+   {PrintProgram P1}
+   {System.showInfo "After one reduction:"}
+   {PrintProgram S1}
 
    %% 2) (twice 5) → (5 + 5) y una segunda reducción (primitiva)
+   {System.showInfo "TEST 2: (twice 5) → (5 + 5) → 10"}
    P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
    S2 = {Reduce P2}
-   {Show P2}
-   {Show S2}
-   %% Un paso más para verificar primitivas
-   {Show {Reduce S2}}
+   S2_2 = {Reduce S2}
+   {PrintProgram P2}
+   {System.showInfo "After first reduction:"}
+   {PrintProgram S2}
+   {System.showInfo "After second reduction:"}
+   {PrintProgram S2_2}
 
    %% 3) (+ 2 3) → 5
+   {System.showInfo "TEST 3: (+ 2 3) → 5"}
    P3 = prog(function:'f' args:[x] body:leaf(var:x)
              call:app(function:app(function:leaf(var:'+') arg:leaf(num:2))
                            arg:leaf(num:3)))
    S3 = {Reduce P3}
-   {Show P3}
-   {Show S3}
+   {PrintProgram P3}
+   {System.showInfo "After reduction:"}
+   {PrintProgram S3}
 end
 
 
@@ -434,35 +489,51 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 local P1 R1 P2 R2 in
+   {System.showInfo "TASK 4: Evaluate (Full Reduction) Tests"}
+   {System.showInfo "========================================="}
+   
    %% Ejemplo 1 — square square 3 → 81
+   {System.showInfo "TEST 1: square square 3 → 81"}
    P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
    R1 = {Evaluate P1}
-   {Show R1}   %% debe mostrar 81
+   {PrintProgram P1}
+   {PrintResult R1}
 
    %% Ejemplo 2 — fourtimes 2 → 8
    %% (extiende lenguaje: var y = x*x in y+y)
    %% Se comportará igual que (x*x)+(x*x)
+   {System.showInfo "TEST 2: fourtimes 2 → 8"}
    P2 = {GraphGeneration "function fourtimes x = x * x + x * x\nfourtimes 2"}
    R2 = {Evaluate P2}
-   {Show R2}   %% debe mostrar 8
+   {PrintProgram P2}
+   {PrintResult R2}
 end
 
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 🔬 Tests: extended language
+%% 🔬 Tests: Extended Language
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 local P1 P2 P3 in
+   {System.showInfo "EXTENDED LANGUAGE Tests"}
+   {System.showInfo "========================================="}
+   
    %% Múltiples parámetros
+   {System.showInfo "TEST 1: Multiple parameters - sum_n 1 1 1 2 → 6"}
    P1 = {GraphGeneration "function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
-   {Show {Evaluate P1}}   %% esperado: 6
+   {PrintProgram P1}
+   {PrintResult {Evaluate P1}}
 
    %% Variable interna
+   {System.showInfo "TEST 2: Internal variables - var_use 2 → 5"}
    P2 = {GraphGeneration "function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
-   {Show {Evaluate P2}}   %% esperado: 5
+   {PrintProgram P2}
+   {PrintResult {Evaluate P2}}
 
    %% Nesting complejo
+   {System.showInfo "TEST 3: Complex nesting - arithmetic with nested calls"}
    P3 = {GraphGeneration "function arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
-   {Show {Evaluate P3}}
+   {PrintProgram P3}
+   {PrintResult {Evaluate P3}}
 end
