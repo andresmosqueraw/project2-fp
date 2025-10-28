@@ -105,3 +105,121 @@ local G1 G2 in
    G2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
    {Show G2}
 end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 📘 FP Project – Task 2: NextReduction
+%%  - Encuentra la redex externa (outermost) para reducir
+%%  - Si faltan argumentos → WHNF
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% ¿Es operador primitivo?
+fun {IsPrimitive Op}
+    {List.member Op ['+' '-' '*' '/']}
+ end
+ 
+ %% Aridad de la "cabeza" (head) según sea primitiva o supercombinator
+ fun {HeadArity Head Prog}
+    case Head
+    of leaf(var:Op) then
+       if {IsPrimitive Op} then 2
+       elseif Op==Prog.function then 1      %% tu minilenguaje: 1 parámetro
+       else 0                                %% variable libre / desconocida
+       end
+    [] leaf(num:_) then 0
+    else 0
+    end
+ end
+ 
+ %% Clasificación (para informar el tipo de redex)
+ fun {HeadKind Head Prog}
+    case Head
+    of leaf(var:Op) then
+       if {IsPrimitive Op} then primitive(Op)
+       elseif Op==Prog.function then supercombinator(Op)
+       else variable(Op)
+       end
+    [] leaf(num:N) then number(N)
+    else other
+    end
+ end
+ 
+ %% Unwind: sigue la rama izquierda acumulando:
+ %%   - args: lista de argumentos encontrados (primero el más cercano a la cabeza)
+ %%   - apps: lista de nodos app en orden de arriba hacia abajo (raíz→fondo)
+ fun {Unwind Expr Args Apps}
+    case Expr
+    of app(function:F arg:A) then
+       {Unwind F A|Args Expr|Apps}
+    else
+       unwind(head:Expr args:Args apps:Apps)
+    end
+ end
+ 
+ %% Acceso seguro al enésimo (1-indexed)
+ fun {Nth L I}
+    {List.nth L I}
+ end
+ 
+ %% NextReduction:
+ %%  Entrada: prog(function: FName arg: ... body: ... call: CallGraph)
+ %%  Salida:  record con la info de la redex externa
+ %%           redex(kind:primitive/supercombinator/..., head:Head,
+ %%                 arity:K, args:ArgsK, rest:RemainingArgs,
+ %%                 root:RootAppNode, apps:SpineApps, allargs:AllArgs,
+ %%                 status:ok|whnf|stuck)
+ fun {NextReduction Prog}
+    local UW Head K Apps AllArgs LenApps RootIndex ArgsK Remaining Kind in
+       UW      = {Unwind Prog.call nil nil}
+       Head    = UW.head
+       AllArgs = UW.args           %% orden: [arg1, arg2, ...] donde arg1 es el más cercano a la cabeza
+       Apps    = UW.apps           %% orden: raíz → fondo
+       K       = {HeadArity Head Prog}
+       Kind    = {HeadKind Head Prog}
+ 
+       if K==0 then
+          %% No hay redex (cabeza no reducible)
+          redex(status:stuck kind:Kind head:Head allargs:AllArgs apps:Apps)
+       elseif {Length AllArgs} < K then
+          %% No hay suficientes argumentos → WHNF
+          redex(status:whnf kind:Kind head:Head arity:K allargs:AllArgs apps:Apps)
+       else
+          %% Hay redex externa: tomar K args y ubicar el nodo raíz correspondiente
+          ArgsK     = {List.take AllArgs K}          %% primeros K argumentos
+          Remaining = {List.drop AllArgs K}
+          LenApps   = {Length Apps}
+          RootIndex = LenApps - K + 1                %% nodo app que es raíz de la redex
+          redex(status:ok kind:Kind head:Head arity:K
+                args:ArgsK rest:Remaining
+                root:{Nth Apps RootIndex}
+                apps:Apps allargs:AllArgs)
+       end
+    end
+ end
+ 
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ %% 🔬 Tests de Task 2
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+ local P1 R1 P2 R2 P3 R3 in
+    %% square square 3
+    P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+    R1 = {NextReduction P1}
+    {Show P1}
+    {Show R1}
+ 
+    %% twice 5
+    P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+    R2 = {NextReduction P2}
+    {Show P2}
+    {Show R2}
+ 
+    %% + 2 (falta arg) → WHNF sobre primitiva
+    P3 = prog(function:'f' arg:x
+              body:leaf(var:x)
+              call:app(function:leaf(var:'+') arg:leaf(num:2)))
+    R3 = {NextReduction P3}
+    {Show P3}
+    {Show R3}
+ end
+ 
