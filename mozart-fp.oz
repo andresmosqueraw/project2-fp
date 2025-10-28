@@ -363,3 +363,46 @@ local P1 S1 P2 S2 P3 S3 in
    {Show P3}
    {Show S3}
 end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 📘 FP Project – Task 4: Evaluate (iterative full reduction)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+fun {Evaluate Prog}
+   local R Pnext in
+      R = {NextReduction Prog}
+      if R.status == ok then
+         %% hay redex → reduce y continúa
+         Pnext = {Reduce Prog}
+         {Evaluate Pnext}
+      elseif R.status == whnf then
+         %% forma normal débil: puede no ser número, devolver grafo
+         Prog
+      else
+         %% stuck o sin redex: devolver el valor si es número
+         case Prog.call
+         of leaf(num:N) then N
+         [] _ then Prog
+         end
+      end
+   end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 🔬 Tests Task 4
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+local P1 R1 P2 R2 in
+   %% Ejemplo 1 — square square 3 → 81
+   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   R1 = {Evaluate P1}
+   {Show R1}   %% debe mostrar 81
+
+   %% Ejemplo 2 — fourtimes 2 → 8
+   %% (extiende lenguaje: var y = x*x in y+y)
+   %% Se comportará igual que (x*x)+(x*x)
+   P2 = {GraphGeneration "function fourtimes x = x * x + x * x\nfourtimes 2"}
+   R2 = {Evaluate P2}
+   {Show R2}   %% debe mostrar 8
+end
