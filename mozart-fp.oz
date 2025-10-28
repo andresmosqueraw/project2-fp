@@ -537,3 +537,49 @@ local P1 P2 P3 in
    {PrintProgram P3}
    {PrintResult {Evaluate P3}}
 end
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 🔬 Tests: Edge Cases for Robustness
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+local P1 P2 P3 P4 P5 P6 in
+   {System.showInfo "EDGE CASE TESTS"}
+   {System.showInfo "========================================="}
+
+   %% 1️⃣ Identity function
+   {System.showInfo "TEST 1: fun id x = x\nid 5 → 5"}
+   P1 = {GraphGeneration "function id x = x\nid 5"}
+   {PrintProgram P1}
+   {PrintResult {Evaluate P1}}
+
+   %% 2️⃣ Constant function (ignores second argument)
+   {System.showInfo "TEST 2: fun const x y = x\nconst 5 9 → 5"}
+   P2 = {GraphGeneration "function const x y = x\nconst 5 9"}
+   {PrintProgram P2}
+   {PrintResult {Evaluate P2}}
+
+   %% 3️⃣ Nested parentheses in arithmetic expression
+   {System.showInfo "TEST 3: fun nested x = x + (x * x)\nnested 3 → 12"}
+   P3 = {GraphGeneration "function nested x = x + (x * x)\nnested 3"}
+   {PrintProgram P3}
+   {PrintResult {Evaluate P3}}
+
+   %% 4️⃣ Multi-parameter addition and repetition
+   {System.showInfo "TEST 4: fun doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3 → 10"}
+   P4 = {GraphGeneration "function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3"}
+   {PrintProgram P4}
+   {PrintResult {Evaluate P4}}
+
+   %% 5️⃣ Variable chaining with var-in nesting
+   {System.showInfo "TEST 5: fun var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2 → 9"}
+   P5 = {GraphGeneration "function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2"}
+   {PrintProgram P5}
+   {PrintResult {Evaluate P5}}
+
+   %% 6️⃣ Free variable (non-reducible WHNF)
+   {System.showInfo "TEST 6: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
+   P6 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   {PrintProgram P6}
+   {PrintResult {Evaluate P6}}
+end
