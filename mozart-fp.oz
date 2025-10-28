@@ -15,6 +15,21 @@ fun {Str2Lst S}
    {Map {String.tokens S & } fun {$ L} {String.toAtom L} end}
 end
 
+fun {FindIndex L P}
+   local FindIndexAux in
+      fun {FindIndexAux L P I}
+         case L
+         of nil then false
+         [] H|T then
+            if {P H} then I
+            else {FindIndexAux T P I+1}
+            end
+         end
+      end
+      {FindIndexAux L P 1}
+   end
+end
+
 fun {CleanTokens L}
    case L
    of nil then nil
@@ -51,8 +66,29 @@ end
 fun {BuildExpr Tokens}
    case Tokens
    of nil then unit
+
+   %% caso 1: definición interna var ... in ...
+   [] 'var'|VarName|'='|Rest then
+      local BindTokens BodyTokens in
+         %% separar binding y cuerpo (por la palabra in)
+         BindTokens = {List.takeWhile Rest fun {$ T} T \= 'in' end}
+         BodyTokens = {List.dropWhile Rest fun {$ T} T \= 'in' end}
+         case BodyTokens
+         of 'in'|BodyRest then
+            var(bindings:[bind(var:VarName expr:{BuildExpr BindTokens})]
+                body:{BuildExpr BodyRest})
+         else
+            raise error('missing_in_keyword'(tokens:Tokens)) end
+         end
+      end
+
+   %% caso 2: expresión simple (operador o valor único)
    [] [X] then {Leaf X}
+
+   %% caso 3: aplicación binaria (función + argumento)
    [] X|Y|nil then {App {Leaf X} {Leaf Y}}
+
+   %% caso 4: aplicación n-aria
    [] X|Rest then {App {Leaf X} {BuildExpr Rest}}
    end
 end
@@ -63,34 +99,38 @@ end
 
 fun {GraphGeneration ProgramStr}
    local
-      Lines TokensDef TokensCall FName ArgName BodyTokens FunBody CallGraph
+      Lines TokensDef TokensCall FName ArgsTokens BodyTokens FunBody CallGraph
    in
-      %% Split lines
       Lines = {String.tokens ProgramStr &\n}
 
       if {Length Lines} < 2 then
          raise error('Program must have two lines: definition and call') end
       end
 
-      %% Tokenize each line
       TokensDef  = {CleanTokens {Str2Lst {List.nth Lines 1}}}
       TokensCall = {CleanTokens {Str2Lst {List.nth Lines 2}}}
 
-      %% Expect form: function <name> <arg> = <body...>
+      %% expect "function <name> <arg1> <arg2> ... = <body>"
       if {List.nth TokensDef 1} \= function then
          raise error('Definition must start with function') end
       end
 
-      FName    = {List.nth TokensDef 2}
-      ArgName  = {List.nth TokensDef 3}
-      BodyTokens = {List.drop TokensDef 4}   %% after function name arg =
+      FName = {List.nth TokensDef 2}
 
-      %% Build graphs
+      %% separa argumentos de la parte derecha
+      local EqPos in
+         EqPos = {FindIndex TokensDef fun {$ X} X=='=' end}
+         if EqPos == false then
+            raise error('Missing "=" in definition') end
+         end
+         ArgsTokens = {List.drop {List.take TokensDef (EqPos-1)} 2}
+         BodyTokens = {List.drop TokensDef EqPos}
+      end
+
       FunBody   = {BuildExpr BodyTokens}
       CallGraph = {BuildExpr TokensCall}
 
-      %% Return structure
-      prog(function:FName arg:ArgName body:FunBody call:CallGraph)
+      prog(function:FName args:ArgsTokens body:FunBody call:CallGraph)
    end
 end
 
@@ -161,8 +201,8 @@ fun {IsPrimitive Op}
     {List.nth L I}
  end
  
- %% NextReduction:
- %%  Entrada: prog(function: FName arg: ... body: ... call: CallGraph)
+%% NextReduction:
+%%  Entrada: prog(function: FName args: ... body: ... call: CallGraph)
  %%  Salida:  record con la info de la redex externa
  %%           redex(kind:primitive/supercombinator/..., head:Head,
  %%                 arity:K, args:ArgsK, rest:RemainingArgs,
@@ -215,7 +255,7 @@ fun {IsPrimitive Op}
     {Show R2}
  
     %% + 2 (falta arg) → WHNF sobre primitiva
-    P3 = prog(function:'f' arg:x
+    P3 = prog(function:'f' args:[x]
               body:leaf(var:x)
               call:app(function:leaf(var:'+') arg:leaf(num:2)))
     R3 = {NextReduction P3}
@@ -277,7 +317,7 @@ fun {EvalToNum Expr Prog}
    of leaf(num:N) then N
    else
       local P R P2 in
-         P  = prog(function:Prog.function arg:Prog.arg body:Prog.body call:Expr)
+         P  = prog(function:Prog.function args:Prog.args body:Prog.body call:Expr)
          R  = {NextReduction P}
          if R.status==ok then
             P2 = {Reduce P}
@@ -304,7 +344,7 @@ fun {Reduce Prog}
             %% (nuestro mini-lenguaje tiene 1 parámetro)
             local ArgNode Instanced in
                ArgNode  = {List.nth R.args 1}
-               Instanced = {Subst Prog.body Prog.arg ArgNode}
+               Instanced = {Subst Prog.body {List.nth Prog.args 1} ArgNode}
                %% si hay más argumentos en la aplicación externa, reaplícalos
                NewNode  = {ApplyRest Instanced R.rest}
             end
@@ -331,7 +371,7 @@ fun {Reduce Prog}
 
          %% Insertar NewNode en el árbol: reemplazar la raíz de la redex
          NewCall = {ReplaceSub Prog.call R.root NewNode}
-         prog(function:Prog.function arg:Prog.arg body:Prog.body call:NewCall)
+         prog(function:Prog.function args:Prog.args body:Prog.body call:NewCall)
       end
    end
 end
@@ -356,7 +396,7 @@ local P1 S1 P2 S2 P3 S3 in
    {Show {Reduce S2}}
 
    %% 3) (+ 2 3) → 5
-   P3 = prog(function:'f' arg:x body:leaf(var:x)
+   P3 = prog(function:'f' args:[x] body:leaf(var:x)
              call:app(function:app(function:leaf(var:'+') arg:leaf(num:2))
                            arg:leaf(num:3)))
    S3 = {Reduce P3}
@@ -405,4 +445,24 @@ local P1 R1 P2 R2 in
    P2 = {GraphGeneration "function fourtimes x = x * x + x * x\nfourtimes 2"}
    R2 = {Evaluate P2}
    {Show R2}   %% debe mostrar 8
+end
+
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 🔬 Tests: extended language
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+local P1 P2 P3 in
+   %% Múltiples parámetros
+   P1 = {GraphGeneration "function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
+   {Show {Evaluate P1}}   %% esperado: 6
+
+   %% Variable interna
+   P2 = {GraphGeneration "function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
+   {Show {Evaluate P2}}   %% esperado: 5
+
+   %% Nesting complejo
+   P3 = {GraphGeneration "function arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
+   {Show {Evaluate P3}}
 end
