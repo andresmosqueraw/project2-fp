@@ -343,6 +343,9 @@ fun {Subst Expr Var WithNode}
    [] app(function:F arg:A) then
       app(function:{Subst F Var WithNode}
           arg:      {Subst A Var WithNode})
+   [] var(bindings:Bs body:B) then
+      %% Para variables internas, sustituir en el cuerpo pero no en los bindings
+      var(bindings:Bs body:{Subst B Var WithNode})
    else
       Expr
    end
@@ -353,6 +356,26 @@ fun {ApplyRest Node Rest}
    case Rest
    of nil        then Node
    [] R|Rs then {ApplyRest app(function:Node arg:R) Rs}
+   end
+end
+
+%% Evalúa variables internas (var ... in ...)
+fun {EvalVarBindings Bindings Prog}
+   case Bindings
+   of nil then Prog
+   [] bind(var:V expr:E)|Rest then
+      %% Evaluar la expresión E hasta obtener un valor
+      local EvaluatedE in
+         EvaluatedE = {EvalToNum E Prog}
+         %% Sustituir V por el valor evaluado en el resto de bindings y en Prog
+         local NewRest NewProg in
+            NewRest = {Map Rest fun {$ B} 
+               bind(var:B.var expr:{Subst B.expr V leaf(num:EvaluatedE)})
+            end}
+            NewProg = {Subst Prog V leaf(num:EvaluatedE)}
+            {EvalVarBindings NewRest NewProg}
+         end
+      end
    end
 end
 
@@ -371,11 +394,17 @@ fun {ReplaceSub Expr Root New}
    end
 end
 
-%% Evalúa una subexpresión hasta número usando una pequeña “máquina”
+%% Evalúa una subexpresión hasta número usando una pequeña "máquina"
 %%   (vuelve a usar NextReduction + Reduce sobre un programa temporal)
 fun {EvalToNum Expr Prog}
    case Expr
    of leaf(num:N) then N
+   [] var(bindings:Bs body:B) then
+      %% Evaluar variables internas primero
+      local EvaluatedBody in
+         EvaluatedBody = {EvalVarBindings Bs B}
+         {EvalToNum EvaluatedBody Prog}
+      end
    else
       local P R P2 in
          P  = prog(function:Prog.function args:Prog.args body:Prog.body call:Expr)
@@ -401,14 +430,25 @@ fun {Reduce Prog}
       else
          case R.kind
          of supercombinator(Fn) then
-            %% Instanciar cuerpo con el/los argumentos consumidos
-            %% (nuestro mini-lenguaje tiene 1 parámetro)
-            local ArgNode Instanced in
-               ArgNode  = {List.nth R.args 1}
-               Instanced = {Subst Prog.body {List.nth Prog.args 1} ArgNode}
-               %% si hay más argumentos en la aplicación externa, reaplícalos
-               NewNode  = {ApplyRest Instanced R.rest}
-            end
+            %% Instanciar cuerpo con TODOS los argumentos consumidos
+            local SubstAll in
+               fun {SubstAll Expr ArgsNames ArgsValues}
+                  case ArgsNames
+                  of nil then Expr
+                  [] Name|RestNames then
+                     case ArgsValues
+                     of Value|RestValues then
+                        {SubstAll {Subst Expr Name Value} RestNames RestValues}
+                     [] nil then Expr  %% Si no hay más valores, devolver la expresión
+                     end
+                  end
+               end
+               local Instanced in
+                  Instanced = {SubstAll Prog.body Prog.args R.args}
+                  %% si hay más argumentos en la aplicación externa, reaplícalos
+                  NewNode = {ApplyRest Instanced R.rest}
+               end
+            end            
          [] primitive(Op) then
             %% Evaluar ambos argumentos a número y calcular
             local A1 A2 N1 N2 Res in
@@ -488,8 +528,26 @@ fun {Evaluate Prog}
          Pnext = {Reduce Prog}
          {Evaluate Pnext}
       elseif R.status == whnf then
-         %% forma normal débil: puede no ser número, devolver grafo
-         Prog
+         %% forma normal débil: verificar si hay variables internas que evaluar
+         case Prog.call
+         of var(bindings:Bs body:B) then
+            %% Evaluar variables internas
+            local EvaluatedBody in
+               EvaluatedBody = {EvalVarBindings Bs B}
+               case EvaluatedBody
+               of leaf(num:N) then N
+               [] _ then
+                  %% Crear nuevo programa con el cuerpo evaluado y continuar
+                  local NewProg in
+                     NewProg = prog(function:Prog.function args:Prog.args body:Prog.body call:EvaluatedBody)
+                     {Evaluate NewProg}
+                  end
+               end
+            end
+         [] _ then
+            %% No es var, devolver el grafo
+            Prog
+         end
       else
          %% stuck o sin redex: devolver el valor si es número
          case Prog.call
@@ -559,7 +617,7 @@ end
 %% 🔬 Tests: Edge Cases for Robustness
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-local P1 P2 P3 P4 P5 P6 in
+local P1 P2 P3 P4 P5 P6 P7 P8 in
    {System.showInfo "EDGE CASE TESTS"}
    {System.showInfo "========================================="}
 
@@ -593,9 +651,21 @@ local P1 P2 P3 P4 P5 P6 in
    {PrintProgram P5}
    {PrintResult {Evaluate P5}}
 
-   %% 6️⃣ Free variable (non-reducible WHNF)
-   {System.showInfo "TEST 6: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
-   P6 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   %% 6️⃣ Complex nested function calls
+   {System.showInfo "TEST 6: fun complex x = (x * x) + (x * x)\ncomplex 3 → 18"}
+   P6 = {GraphGeneration "function complex x = (x * x) + (x * x)\ncomplex 3"}
    {PrintProgram P6}
    {PrintResult {Evaluate P6}}
+
+   %% 7️⃣ Multiple parameters with complex expressions
+   {System.showInfo "TEST 7: fun mult x y z = (x + y) * z\nmult 2 3 4 → 20"}
+   P7 = {GraphGeneration "function mult x y z = (x + y) * z\nmult 2 3 4"}
+   {PrintProgram P7}
+   {PrintResult {Evaluate P7}}
+
+   %% 8️⃣ Free variable (non-reducible WHNF)
+   {System.showInfo "TEST 8: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
+   P8 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   {PrintProgram P8}
+   {PrintResult {Evaluate P8}}
 end
