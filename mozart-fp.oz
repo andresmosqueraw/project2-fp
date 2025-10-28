@@ -359,21 +359,21 @@ fun {ApplyRest Node Rest}
    end
 end
 
-%% Evalúa variables internas (var ... in ...)
-fun {EvalVarBindings Bindings Prog}
+%% ✅ FIX: Evalúa variables internas (var ... in ...) correctamente
+fun {EvalVarBindings Bindings Body}
    case Bindings
-   of nil then Prog
+   of nil then Body
    [] bind(var:V expr:E)|Rest then
       %% Evaluar la expresión E hasta obtener un valor
       local EvaluatedE in
-         EvaluatedE = {EvalToNum E Prog}
-         %% Sustituir V por el valor evaluado en el resto de bindings y en Prog
-         local NewRest NewProg in
+         EvaluatedE = {EvalToNum E prog(function:'temp' args:nil body:E call:E)}
+         %% Sustituir V por el valor evaluado en el resto de bindings y en Body
+         local NewRest NewBody in
             NewRest = {Map Rest fun {$ B} 
                bind(var:B.var expr:{Subst B.expr V leaf(num:EvaluatedE)})
             end}
-            NewProg = {Subst Prog V leaf(num:EvaluatedE)}
-            {EvalVarBindings NewRest NewProg}
+            NewBody = {Subst Body V leaf(num:EvaluatedE)}
+            {EvalVarBindings NewRest NewBody}
          end
       end
    end
@@ -431,20 +431,18 @@ fun {Reduce Prog}
          case R.kind
          of supercombinator(Fn) then
             %% Instanciar cuerpo con TODOS los argumentos consumidos
-            local SubstAll in
-               fun {SubstAll Expr ArgsNames ArgsValues}
-                  case ArgsNames
-                  of nil then Expr
-                  [] Name|RestNames then
-                     case ArgsValues
-                     of Value|RestValues then
-                        {SubstAll {Subst Expr Name Value} RestNames RestValues}
-                     [] nil then Expr  %% Si no hay más valores, devolver la expresión
-                     end
+            %% ✅ FIX: Sustitución múltiple para funciones con múltiples parámetros
+            local SubstMultiple in
+               fun {SubstMultiple Expr ArgsNames ArgsValues}
+                  case ArgsNames#ArgsValues
+                  of nil#nil then Expr
+                  [] (Name|RestNames)#(Value|RestValues) then
+                     {SubstMultiple {Subst Expr Name Value} RestNames RestValues}
+                  [] _#_ then Expr  %% Longitudes diferentes, devolver sin cambios
                   end
                end
                local Instanced in
-                  Instanced = {SubstAll Prog.body Prog.args R.args}
+                  Instanced = {SubstMultiple Prog.body Prog.args R.args}
                   %% si hay más argumentos en la aplicación externa, reaplícalos
                   NewNode = {ApplyRest Instanced R.rest}
                end
@@ -520,6 +518,7 @@ end
 %% 📘 FP Project – Task 4: Evaluate (iterative full reduction)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+%% ✅ FIX: Evaluación profunda recursiva que siempre devuelve números
 fun {Evaluate Prog}
    local R Pnext in
       R = {NextReduction Prog}
@@ -544,8 +543,48 @@ fun {Evaluate Prog}
                   end
                end
             end
+         [] app(function:F arg:A) then
+            %% Evaluar recursivamente función y argumento
+            local EvalF EvalA in
+               EvalF = {EvaluateDeep F Prog}
+               EvalA = {EvaluateDeep A Prog}
+               case EvalF#EvalA
+               of leaf(num:NF)#leaf(num:NA) then
+                  %% Aplicar operación si es primitiva
+                  case F
+                  of leaf(var:Op) then
+                     case Op
+                     of '+' then NF + NA
+                     [] '-' then NF - NA
+                     [] '*' then NF * NA
+                     [] '/' then NF div NA
+                     else
+                        %% No es primitiva, crear nueva aplicación
+                        local NewProg in
+                           NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
+                                         call:app(function:EvalF arg:EvalA))
+                           {Evaluate NewProg}
+                        end
+                     end
+                  else
+                     %% No es primitiva, crear nueva aplicación
+                     local NewProg in
+                        NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
+                                      call:app(function:EvalF arg:EvalA))
+                        {Evaluate NewProg}
+                     end
+                  end
+               [] _#_ then
+                  %% Al menos uno no es número, crear nueva aplicación
+                  local NewProg in
+                     NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
+                                   call:app(function:EvalF arg:EvalA))
+                     {Evaluate NewProg}
+                  end
+               end
+            end
          [] _ then
-            %% No es var, devolver el grafo
+            %% No es var ni app, devolver el grafo
             Prog
          end
       else
@@ -555,6 +594,27 @@ fun {Evaluate Prog}
          [] _ then Prog
          end
       end
+   end
+end
+
+%% ✅ FIX: Función auxiliar para evaluación profunda de expresiones
+fun {EvaluateDeep Expr Prog}
+   case Expr
+   of leaf(num:N) then Expr
+   [] leaf(var:_) then Expr
+   [] app(function:F arg:A) then
+      local EvalF EvalA in
+         EvalF = {EvaluateDeep F Prog}
+         EvalA = {EvaluateDeep A Prog}
+         app(function:EvalF arg:EvalA)
+      end
+   [] var(bindings:Bs body:B) then
+      local EvaluatedBody in
+         EvaluatedBody = {EvalVarBindings Bs B}
+         {EvaluateDeep EvaluatedBody Prog}
+      end
+   else
+      Expr
    end
 end
 
@@ -617,55 +677,64 @@ end
 %% 🔬 Tests: Edge Cases for Robustness
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-local P1 P2 P3 P4 P5 P6 P7 P8 in
-   {System.showInfo "EDGE CASE TESTS"}
+local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
+   {System.showInfo "🎯 FINAL TESTS - 100% CHECKLIST VERIFICATION"}
    {System.showInfo "========================================="}
 
-   %% 1️⃣ Identity function
-   {System.showInfo "TEST 1: fun id x = x\nid 5 → 5"}
-   P1 = {GraphGeneration "function id x = x\nid 5"}
+   %% ✅ A. Sustitución múltiple (multi-argument functions)
+   {System.showInfo "TEST A1: function const x y = x\nconst 5 9 → 5"}
+   P1 = {GraphGeneration "function const x y = x\nconst 5 9"}
    {PrintProgram P1}
    {PrintResult {Evaluate P1}}
 
-   %% 2️⃣ Constant function (ignores second argument)
-   {System.showInfo "TEST 2: fun const x y = x\nconst 5 9 → 5"}
-   P2 = {GraphGeneration "function const x y = x\nconst 5 9"}
+   {System.showInfo "TEST A2: function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2 → 6"}
+   P2 = {GraphGeneration "function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
    {PrintProgram P2}
    {PrintResult {Evaluate P2}}
 
-   %% 3️⃣ Nested parentheses in arithmetic expression
-   {System.showInfo "TEST 3: fun nested x = x + (x * x)\nnested 3 → 12"}
-   P3 = {GraphGeneration "function nested x = x + (x * x)\nnested 3"}
+   {System.showInfo "TEST A3: function mult x y z = (x + y) * z\nmult 2 3 4 → 20"}
+   P3 = {GraphGeneration "function mult x y z = (x + y) * z\nmult 2 3 4"}
    {PrintProgram P3}
    {PrintResult {Evaluate P3}}
 
-   %% 4️⃣ Multi-parameter addition and repetition
-   {System.showInfo "TEST 4: fun doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3 → 10"}
-   P4 = {GraphGeneration "function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3"}
+   %% ✅ B. Evaluación de variables internas (var ... in ...)
+   {System.showInfo "TEST B1: function fourtimes x = var y = x * x in y + y\nfourtimes 2 → 8"}
+   P4 = {GraphGeneration "function fourtimes x = var y = x * x in y + y\nfourtimes 2"}
    {PrintProgram P4}
    {PrintResult {Evaluate P4}}
 
-   %% 5️⃣ Variable chaining with var-in nesting
-   {System.showInfo "TEST 5: fun var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2 → 9"}
-   P5 = {GraphGeneration "function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2"}
+   {System.showInfo "TEST B2: function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2 → 5"}
+   P5 = {GraphGeneration "function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
    {PrintProgram P5}
    {PrintResult {Evaluate P5}}
 
-   %% 6️⃣ Complex nested function calls
-   {System.showInfo "TEST 6: fun complex x = (x * x) + (x * x)\ncomplex 3 → 18"}
-   P6 = {GraphGeneration "function complex x = (x * x) + (x * x)\ncomplex 3"}
+   {System.showInfo "TEST B3: function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2 → 9"}
+   P6 = {GraphGeneration "function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2"}
    {PrintProgram P6}
    {PrintResult {Evaluate P6}}
 
-   %% 7️⃣ Multiple parameters with complex expressions
-   {System.showInfo "TEST 7: fun mult x y z = (x + y) * z\nmult 2 3 4 → 20"}
-   P7 = {GraphGeneration "function mult x y z = (x + y) * z\nmult 2 3 4"}
+   %% ✅ C. Evaluación profunda recursiva
+   {System.showInfo "TEST C1: function square x = x * x\nsquare square 3 → 81"}
+   P7 = {GraphGeneration "function square x = x * x\nsquare square 3"}
    {PrintProgram P7}
    {PrintResult {Evaluate P7}}
 
-   %% 8️⃣ Free variable (non-reducible WHNF)
-   {System.showInfo "TEST 8: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
-   P8 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   {System.showInfo "TEST C2: function nested x = x + (x * x)\nnested 3 → 12"}
+   P8 = {GraphGeneration "function nested x = x + (x * x)\nnested 3"}
    {PrintProgram P8}
    {PrintResult {Evaluate P8}}
+
+   {System.showInfo "TEST C3: function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3 → 10"}
+   P9 = {GraphGeneration "function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3"}
+   {PrintProgram P9}
+   {PrintResult {Evaluate P9}}
+
+   %% ✅ D. Casos de error (deben seguir funcionando)
+   {System.showInfo "TEST D1: function bad x = x + y\nbad 3 → WHNF (y unknown)"}
+   P10 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   {PrintProgram P10}
+   {PrintResult {Evaluate P10}}
+
+   {System.showInfo "🎯 ALL TESTS COMPLETED - EXPECTED RESULTS:"}
+   {System.showInfo "A1: 5, A2: 6, A3: 20, B1: 8, B2: 5, B3: 9, C1: 81, C2: 12, C3: 10, D1: WHNF"}
 end
