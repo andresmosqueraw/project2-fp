@@ -12,7 +12,23 @@ declare
 %% ────────────────────────────────────────────────
 
 fun {Str2Lst S}
-   {Map {String.tokens S & } fun {$ L} {String.toAtom L} end}
+   local
+      fun {CleanChars Cs}
+         case Cs
+         of nil then nil
+         [] C|Cr then
+            if C==&( orelse C==&) orelse C==&, then
+               & | {CleanChars Cr}  %% reemplaza por espacio
+            else
+               C | {CleanChars Cr}
+            end
+         end
+      end
+      Cleaned = {CleanChars {VirtualString.toString S}}
+   in
+      {Map {String.tokens Cleaned & }
+         fun {$ L} {String.toAtom L} end}
+   end
 end
 
 fun {FindIndex L P}
