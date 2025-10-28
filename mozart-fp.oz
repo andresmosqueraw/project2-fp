@@ -223,3 +223,143 @@ fun {IsPrimitive Op}
     {Show R3}
  end
  
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 📘 FP Project – Task 3: Reduce (outermost one-step)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% Reusa IsPrimitive, NextReduction, etc. definidos en Task 2
+
+%% -------- Helpers --------
+
+%% Sustitución: reemplaza todas las ocurrencias de Var por WithNode
+fun {Subst Expr Var WithNode}
+   case Expr
+   of leaf(var:V) then
+      if V==Var then WithNode else Expr end
+   [] leaf(num:_) then
+      Expr
+   [] app(function:F arg:A) then
+      app(function:{Subst F Var WithNode}
+          arg:      {Subst A Var WithNode})
+   else
+      Expr
+   end
+end
+
+%% Aplica argumentos restantes (si los hubiera) a un nodo (asocia a la izquierda)
+fun {ApplyRest Node Rest}
+   case Rest
+   of nil        then Node
+   [] R|Rs then {ApplyRest app(function:Node arg:R) Rs}
+   end
+end
+
+%% Reemplaza una subexpresión (Root) por New dentro de Expr
+fun {ReplaceSub Expr Root New}
+   if Expr==Root then
+      New
+   else
+      case Expr
+      of app(function:F arg:A) then
+         app(function:{ReplaceSub F Root New}
+             arg:      {ReplaceSub A Root New})
+      else
+         Expr
+      end
+   end
+end
+
+%% Evalúa una subexpresión hasta número usando una pequeña “máquina”
+%%   (vuelve a usar NextReduction + Reduce sobre un programa temporal)
+fun {EvalToNum Expr Prog}
+   case Expr
+   of leaf(num:N) then N
+   else
+      local P R P2 in
+         P  = prog(function:Prog.function arg:Prog.arg body:Prog.body call:Expr)
+         R  = {NextReduction P}
+         if R.status==ok then
+            P2 = {Reduce P}
+            {EvalToNum P2.call P2}
+         else
+            raise error('expected_number'(expr:Expr status:R.status)) end
+         end
+      end
+   end
+end
+
+%% -------- Task 3: Reduce (one outermost step) --------
+
+fun {Reduce Prog}
+   local R NewNode NewCall in
+      R = {NextReduction Prog}
+      if R.status \= ok then
+         %% No hay redex (WHNF o atascado) → no cambia
+         Prog
+      else
+         case R.kind
+         of supercombinator(Fn) then
+            %% Instanciar cuerpo con el/los argumentos consumidos
+            %% (nuestro mini-lenguaje tiene 1 parámetro)
+            local ArgNode Instanced in
+               ArgNode  = {List.nth R.args 1}
+               Instanced = {Subst Prog.body Prog.arg ArgNode}
+               %% si hay más argumentos en la aplicación externa, reaplícalos
+               NewNode  = {ApplyRest Instanced R.rest}
+            end
+         [] primitive(Op) then
+            %% Evaluar ambos argumentos a número y calcular
+            local A1 A2 N1 N2 Res in
+               A1 = {List.nth R.args 1}
+               A2 = {List.nth R.args 2}
+               N1 = {EvalToNum A1 Prog}
+               N2 = {EvalToNum A2 Prog}
+               Res =
+                  case Op
+                  of '+' then N1+N2
+                  [] '-' then N1-N2
+                  [] '*' then N1*N2
+                  [] '/' then N1 div N2   %% entero (ajústalo si quieres real)
+                  end
+               NewNode = {ApplyRest leaf(num:Res) R.rest}
+            end
+         else
+            %% variable/number/other en cabeza: no reducible (debería no ocurrir con status ok)
+            NewNode = R.head
+         end
+
+         %% Insertar NewNode en el árbol: reemplazar la raíz de la redex
+         NewCall = {ReplaceSub Prog.call R.root NewNode}
+         prog(function:Prog.function arg:Prog.arg body:Prog.body call:NewCall)
+      end
+   end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% 🔬 Tests Task 3
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+local P1 S1 P2 S2 P3 S3 in
+   %% 1) (square square) 3 → ( (square 3) * (square 3) )
+   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   S1 = {Reduce P1}
+   {Show P1}
+   {Show S1}
+
+   %% 2) (twice 5) → (5 + 5) y una segunda reducción (primitiva)
+   P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+   S2 = {Reduce P2}
+   {Show P2}
+   {Show S2}
+   %% Un paso más para verificar primitivas
+   {Show {Reduce S2}}
+
+   %% 3) (+ 2 3) → 5
+   P3 = prog(function:'f' arg:x body:leaf(var:x)
+             call:app(function:app(function:leaf(var:'+') arg:leaf(num:2))
+                           arg:leaf(num:3)))
+   S3 = {Reduce P3}
+   {Show P3}
+   {Show S3}
+end
