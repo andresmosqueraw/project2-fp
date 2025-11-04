@@ -1,9 +1,6 @@
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 📘 FP Project – Task 1: GraphGeneration (Corrected)
+%% 📘 FP Project – Task 1
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-%% Consideraciones:
-%% No se puede usar palabras reservadas de mozart como fun, local, etc.
 
 declare
 
@@ -18,7 +15,6 @@ fun {Str2Lst S}
          of nil then nil
          [] C|Cr then
             if C==&( orelse C==&) orelse C==&, then
-               %% inserta espacio, el propio carácter, espacio
                & | C | & | {InsDelims Cr}
             else
                C | {InsDelims Cr}
@@ -58,7 +54,7 @@ fun {CleanTokens L}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 1 – Node constructors
+%% STEP 1
 %% ────────────────────────────────────────────────
 
 fun {Leaf X}
@@ -75,14 +71,8 @@ fun {App F A}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 2 – Recursive expression builder
+%% STEP 2
 %% ────────────────────────────────────────────────
-%%  e.g. ["square" "square" "3"]
-%%  → app(fun:leaf(var:"square") arg:app(fun:leaf(var:"square") arg:leaf(num:3)))
-
-%% Construye aplicación asociativa a la derecha:
-%% ["square" "square" "3"] ==> app(function:leaf(var:square)
-%%                                 arg:app(function:leaf(var:square) arg:leaf(num:3)))
 fun {BuildRight Ts}
    case Ts
    of [X] then {Leaf X}
@@ -90,10 +80,7 @@ fun {BuildRight Ts}
    end
 end
 
-%% ---------- Infix parsing helpers (shunting-yard) ----------
-%% ---------- Infix parsing helpers (shunting-yard) ----------
 fun {IsOp T}
-   %% Solo operadores infijos verdaderos
    {List.member T ['+' '-' '*' '/']}
 end
 
@@ -107,9 +94,8 @@ fun {Prec Op}
    end
 end
 
-fun {AssocLeft Op} true end  %% todos left-assoc aquí
+fun {AssocLeft Op} true end
 
-%% Convierte lista de tokens infijos a RPN (lista)
 fun {ToRPN Tokens}
    fun {Loop Ts Out Stk}
       case Ts
@@ -117,7 +103,6 @@ fun {ToRPN Tokens}
       [] '('|Tr then {Loop Tr Out '('|Stk}
       [] ')'|Tr then
          local Popped Rest PopUntilOpen in
-            %% pop hasta '('
             fun {PopUntilOpen S Acc}
                case S
                of nil then raise error('mismatched_parens') end
@@ -130,7 +115,6 @@ fun {ToRPN Tokens}
          end
       [] T|Tr then
          if {IsOp T} then
-            %% pop operadores de mayor/igual precedencia
             local S2 Out2 PopOps in
                fun {PopOps S O Acc}
                   case S
@@ -150,7 +134,6 @@ fun {ToRPN Tokens}
                {Loop Tr {Append Out Out2} T|S2}
             end
          else
-            %% operando (número, var, 'rad' como función prefija, etc.)
             {Loop Tr {Append Out [T]} Stk}
          end
       end
@@ -159,11 +142,9 @@ in
    {Loop Tokens nil nil}
 end
 
-%% De RPN a tu AST usando curriado: (+ a b) = app(app(+) a) b
 fun {RPNtoAST RPN}
    fun {Push S X} X|S end
    fun {Pop2 S}
-      %% A (top) = right, B = left
       case S
       of A|B|Sr then A#B#Sr
       [] _ then raise error('rpn_stack_underflow') end
@@ -179,8 +160,7 @@ fun {RPNtoAST RPN}
       [] Tok|Tr then
          if {IsOp Tok} then
             local A B Rest in
-               A#B#Rest = {Pop2 Stk}          %% A=right, B=left
-               %% app(app(op) left) right
+               A#B#Rest = {Pop2 Stk}
                {Loop Tr {Push Rest app(function:app(function:leaf(var:Tok) arg:B) arg:A)}}
             end
          else
@@ -192,9 +172,7 @@ in
    {Loop RPN nil}
 end
 
-%% Detecta si conviene ruta infija (contiene op o paréntesis)
 fun {LooksInfix Ts}
-   %% Solo considera operadores infijos verdaderos
    ({List.filter Ts IsOp} \= nil)
 end
 
@@ -215,8 +193,6 @@ end
 fun {BuildExpr Tokens}
    case Tokens
    of nil then unit
-
-   %% var ... in ...
    [] 'var'|VarName|'='|Rest then
       local BindTokens BodyTokens in
          BindTokens = {List.takeWhile Rest fun {$ T} T \= 'in' end}
@@ -230,21 +206,17 @@ fun {BuildExpr Tokens}
          end
       end
 
-   %% un solo token → hoja
    [] [X] then {Leaf X}
 
    [] Xs then
       if {LooksInfix Xs} then
          {RPNtoAST {ToRPN Xs}}
       else
-         %% Prefijo: elimina paréntesis "decorativos"
          local Y in
             Y = {List.filter Xs fun {$ T} T \= '(' andthen T \= ')' end}
             if Y \= nil andthen {IsOp {List.nth Y 1}} then
-               %% Operador primitivo en prefijo → ( (op a) b )  (asocia a la IZQUIERDA)
                {BuildLeft Y}
             else
-               %% Identificadores/unarios → asocia a la DERECHA
                {BuildRight Y}
             end
          end
@@ -253,7 +225,7 @@ fun {BuildExpr Tokens}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 3 – Full program graph generator
+%% STEP 3
 %% ────────────────────────────────────────────────
 
 fun {GraphGeneration ProgramStr}
@@ -269,7 +241,6 @@ fun {GraphGeneration ProgramStr}
       TokensDef  = {CleanTokens {Str2Lst {List.nth Lines 1}}}
       TokensCall = {CleanTokens {Str2Lst {List.nth Lines 2}}}
 
-      %% expect "fun <name> <arg1> <arg2> ... = <body>" or "fun <name> ..."
       local FirstToken in
          FirstToken = {List.nth TokensDef 1}
          if FirstToken \= 'fun' andthen FirstToken \= function then
@@ -279,7 +250,6 @@ fun {GraphGeneration ProgramStr}
 
       FName = {List.nth TokensDef 2}
 
-      %% separa argumentos de la parte derecha
       local EqPos in
          EqPos = {FindIndex TokensDef fun {$ X} X=='=' end}
          if EqPos == false then
@@ -297,7 +267,7 @@ fun {GraphGeneration ProgramStr}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 4 – Pretty Printing Functions
+%% STEP 4
 %% ────────────────────────────────────────────────
 
 proc {PrintProgram Prog}
@@ -334,7 +304,7 @@ proc {PrintResult R}
 end
 
 %% ────────────────────────────────────────────────
-%% STEP 5 – Tests
+%% STEP 5
 %% ────────────────────────────────────────────────
 
 local G1 G2 in
@@ -349,41 +319,34 @@ end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 📘 FP Project – Task 2: NextReduction
-%%  - Encuentra la redex externa (outermost) para reducir
-%%  - Si faltan argumentos → WHNF
+%% 📘 FP Project – Task 2
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% ¿Es operador primitivo?
 fun {IsPrimitive Op}
    {List.member Op ['+' '-' '*' '/' 'rad']}
 end
 
-%% ¿Es operador unario?
 fun {IsUnary Op}
    false
 end
 
-%% ¿Es operador binario?
 fun {IsBinary Op}
    {List.member Op ['+' '-' '*' '/' 'rad']}
 end
 
  
- %% Aridad de la "cabeza" (head) según sea primitiva o supercombinator
  fun {HeadArity Head Prog}
     case Head
     of leaf(var:Op) then
        if {IsPrimitive Op} then 2
-       elseif Op==Prog.function then 1      %% tu minilenguaje: 1 parámetro
-       else 0                                %% variable libre / desconocida
+       elseif Op==Prog.function then 1
+       else 0
        end
     [] leaf(num:_) then 0
     else 0
     end
  end
  
- %% Clasificación (para informar el tipo de redex)
  fun {HeadKind Head Prog}
     case Head
     of leaf(var:Op) then
@@ -396,9 +359,6 @@ end
     end
  end
  
- %% Unwind: sigue la rama izquierda acumulando:
- %%   - args: lista de argumentos encontrados (primero el más cercano a la cabeza)
- %%   - apps: lista de nodos app en orden de arriba hacia abajo (raíz→fondo)
  fun {Unwind Expr Args Apps}
     case Expr
     of app(function:F arg:A) then
@@ -408,7 +368,6 @@ end
     end
  end
  
- %% Acceso seguro al enésimo (1-indexed)
  fun {Nth L I}
     {List.nth L I}
  end
@@ -420,13 +379,7 @@ fun {MakeApp F Args}
    end
 end
  
-%% NextReduction:
-%%  Entrada: prog(function: FName args: ... body: ... call: CallGraph)
- %%  Salida:  record con la info de la redex externa
- %%           redex(kind:primitive/supercombinator/..., head:Head,
- %%                 arity:K, args:ArgsK, rest:RemainingArgs,
- %%                 root:RootAppNode, apps:SpineApps, allargs:AllArgs,
- %%                 status:ok|whnf|stuck)
+
  fun {NextReduction Prog}
    local UW Head K Apps AllArgs ArgsK Remaining Kind Root in
       UW      = {Unwind Prog.call nil nil}
@@ -443,7 +396,7 @@ end
       else
          ArgsK     = {List.take AllArgs K}
          Remaining = {List.drop AllArgs K}
-         Root      = {MakeApp Head ArgsK}   %% 👈 reconstrucción directa
+         Root      = {MakeApp Head ArgsK}
          redex(status:ok kind:Kind head:Head arity:K
                args:ArgsK rest:Remaining
                root:Root apps:Apps allargs:AllArgs)
@@ -459,21 +412,18 @@ local P1 R1 P2 R2 P3 R3 in
    {System.showInfo "TASK 2: NextReduction Tests"}
    {System.showInfo "========================================="}
    
-   %% square square 3
    {System.showInfo "TEST 1: square square 3"}
    P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    R1 = {NextReduction P1}
    {PrintProgram P1}
    {PrintRedex R1}
 
-   %% twice 5
    {System.showInfo "TEST 2: twice 5"}
    P2 = {GraphGeneration "fun twice x = x + x\ntwice 5"}
    R2 = {NextReduction P2}
    {PrintProgram P2}
    {PrintRedex R2}
 
-   %% + 2 (falta arg) → WHNF sobre primitiva
    {System.showInfo "TEST 3: + 2 (missing argument → WHNF)"}
    P3 = prog(function:'f' args:[x]
              body:leaf(var:x)
@@ -485,14 +435,9 @@ end
  
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 📘 FP Project – Task 3: Reduce (outermost one-step)
+%% 📘 FP Project – Task 3
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% Reusa IsPrimitive, NextReduction, etc. definidos en Task 2
-
-%% -------- Helpers --------
-
-%% Sustitución: reemplaza todas las ocurrencias de Var por WithNode
 fun {Subst Expr Var WithNode}
    case Expr
    of leaf(var:V) then
@@ -503,14 +448,12 @@ fun {Subst Expr Var WithNode}
       app(function:{Subst F Var WithNode}
           arg:      {Subst A Var WithNode})
    [] var(bindings:Bs body:B) then
-      %% Para variables internas, sustituir en el cuerpo pero no en los bindings
       var(bindings:Bs body:{Subst B Var WithNode})
    else
       Expr
    end
 end
 
-%% Aplica argumentos restantes (si los hubiera) a un nodo (asocia a la izquierda)
 fun {ApplyRest Node Rest}
    case Rest
    of nil        then Node
@@ -518,15 +461,12 @@ fun {ApplyRest Node Rest}
    end
 end
 
-%% ✅ FIX: Evalúa variables internas (var ... in ...) correctamente
 fun {EvalVarBindings Bindings Body}
    case Bindings
    of nil then Body
    [] bind(var:V expr:E)|Rest then
-      %% Evaluar la expresión E hasta obtener un valor
       local EvaluatedE in
          EvaluatedE = {EvalToNum E prog(function:'temp' args:nil body:E call:E)}
-         %% Sustituir V por el valor evaluado en el resto de bindings y en Body
          local NewRest NewBody in
             NewRest = {Map Rest fun {$ B} 
                bind(var:B.var expr:{Subst B.expr V leaf(num:EvaluatedE)})
@@ -538,7 +478,6 @@ fun {EvalVarBindings Bindings Body}
    end
 end
 
-%% Reemplaza una subexpresión (Root) por New dentro de Expr
 fun {ReplaceSub Expr Root New}
    if Expr==Root then
       New
@@ -553,34 +492,22 @@ fun {ReplaceSub Expr Root New}
    end
 end
 
-%% Evalúa una subexpresión hasta número usando una pequeña "máquina"
-%%   (vuelve a usar NextReduction + Reduce sobre un programa temporal)
-%% ==========================================
-%% 🔧 EvalToNum — evita bucles con radicación
-%% ==========================================
-%% ==========================================
-%% ✅ EvalToNum — versión sin atajos de primitivas
-%%    (evita loops en aplicaciones curried como rad)
-%% ==========================================
 fun {EvalToNum Expr Prog}
    case Expr
    of leaf(num:N) then N
    [] leaf(var:_) then
       raise error('expected_number'(expr:Expr status:whnf)) end
    [] var(bindings:Bs body:B) then
-      %% evalúa primero los 'var ... in ...'
       local EvaluatedBody in
          EvaluatedBody = {EvalVarBindings Bs B}
          {EvalToNum EvaluatedBody Prog}
       end
    [] app(function:_ arg:_) then
-      %% Delega SIEMPRE en la máquina de reducción, con guardia
       local P R P2 in
          P  = prog(function:Prog.function args:Prog.args body:Prog.body call:Expr)
          R  = {NextReduction P}
          if R.status == ok then
             P2 = {Reduce P}
-            %% Guardia: si no hubo progreso, corta (evita ciclo)
             if P2.call == P.call then
                raise error('stuck_in_evaltonum'(expr:Expr)) end
             else
@@ -593,41 +520,33 @@ fun {EvalToNum Expr Prog}
          end
       end
    else
-      %% Cualquier otro nodo que no sea número / var / app
       raise error('unexpected_expr_in_evaltonum'(expr:Expr)) end
    end
 end
-
-%% -------- Task 3: Reduce (one outermost step) --------
 
 fun {Reduce Prog}
    local R NewNode NewCall in
       R = {NextReduction Prog}
       if R.status \= ok then
-         %% No hay redex (WHNF o atascado) → no cambia
          Prog
       else
          case R.kind
          of supercombinator(Fn) then
-            %% Instanciar cuerpo con TODOS los argumentos consumidos
-            %% ✅ FIX: Sustitución múltiple para funciones con múltiples parámetros
             local SubstMultiple in
                fun {SubstMultiple Expr ArgsNames ArgsValues}
                   case ArgsNames#ArgsValues
                   of nil#nil then Expr
                   [] (Name|RestNames)#(Value|RestValues) then
                      {SubstMultiple {Subst Expr Name Value} RestNames RestValues}
-                  [] _#_ then Expr  %% Longitudes diferentes, devolver sin cambios
+                  [] _#_ then Expr
                   end
                end
                local Instanced in
                   Instanced = {SubstMultiple Prog.body Prog.args R.args}
-                  %% si hay más argumentos en la aplicación externa, reaplícalos
                   NewNode = {ApplyRest Instanced R.rest}
                end
             end            
          [] primitive(Op) then
-            %% Evaluar ambos argumentos a número y calcular
             local A1 A2 N1 N2 Res in
                A1 = {List.nth R.args 1}
                A2 = {List.nth R.args 2}
@@ -638,7 +557,6 @@ fun {Reduce Prog}
                      if N2 == 0 then
                         raise error('zero_root_not_allowed'(base:N1)) end
                      else
-                        %% cálculo estable: usa floats pero devuelve int
                         local Rv in
                            Rv = {Float.pow {Int.toFloat N1} (1.0/{Int.toFloat N2})}
                            if Rv \= Rv orelse Rv == ~1.0/0.0 then
@@ -661,16 +579,13 @@ fun {Reduce Prog}
                   end
                   NewNode = {ApplyRest leaf(num:Res) R.rest}
                catch _ then
-                  %% Aún no se pueden evaluar los argumentos: no cambiar
                   NewNode = R.root
                end
             end         
          else
-            %% variable/number/other en cabeza: no reducible (debería no ocurrir con status ok)
             NewNode = R.head
          end
 
-         %% Insertar NewNode en el árbol: reemplazar la raíz de la redex
          NewCall = {ReplaceSub Prog.call R.root NewNode}
          prog(function:Prog.function args:Prog.args body:Prog.body call:NewCall)
       end
@@ -685,7 +600,6 @@ local P1 S1 P2 S2 S2_2 P3 S3 in
    {System.showInfo "TASK 3: Reduce (One Step) Tests"}
    {System.showInfo "========================================="}
    
-   %% 1) (square square) 3 → ( (square 3) * (square 3) )
    {System.showInfo "TEST 1: (square square) 3 → ( (square 3) * (square 3) )"}
    P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    S1 = {Reduce P1}
@@ -693,7 +607,6 @@ local P1 S1 P2 S2 S2_2 P3 S3 in
    {System.showInfo "After one reduction:"}
    {PrintProgram S1}
 
-   %% 2) (twice 5) → (5 + 5) y una segunda reducción (primitiva)
    {System.showInfo "TEST 2: (twice 5) → (5 + 5) → 10"}
    P2 = {GraphGeneration "fun twice x = x + x\ntwice 5"}
    S2 = {Reduce P2}
@@ -704,7 +617,6 @@ local P1 S1 P2 S2 S2_2 P3 S3 in
    {System.showInfo "After second reduction:"}
    {PrintProgram S2_2}
 
-   %% 3) (+ 2 3) → 5
    {System.showInfo "TEST 3: (+ 2 3) → 5"}
    P3 = prog(function:'f' args:[x] body:leaf(var:x)
              call:app(function:app(function:leaf(var:'+') arg:leaf(num:2))
@@ -717,25 +629,18 @@ end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 📘 FP Project – Task 4: Evaluate (iterative full reduction)
+%% 📘 FP Project – Task 4
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% ────────────────────────────────────────────────
-%% 📘 FP Project – Task 4: Evaluate (full reduction)
-%% ────────────────────────────────────────────────
-
 fun {Evaluate Prog}
-   %% ✅ Caso base inmediato: si ya es número, retorna el número
    case Prog.call
    of leaf(num:N) then N
    [] _ then
       local R Pnext in
          R = {NextReduction Prog}
          if R.status == ok then
-            %% hay redex → reduce y continúa
             Pnext = {Reduce Prog}
             if Pnext.call == Prog.call then
-               %% sin progreso: devolver el valor si es número
                case Prog.call
                of leaf(num:N) then N
                [] _ then Prog.call
@@ -745,28 +650,21 @@ fun {Evaluate Prog}
             end         
 
          elseif R.status == whnf then
-            %% En WHNF: normaliza la expresión (bindings, apps internas)
-            %% y reintenta con la máquina de reducción.
             local Normal in
                case Prog.call
                of var(bindings:Bs body:B) then
-                  %% Evalúa primero los 'var ... in ...'
                   Normal = {EvalVarBindings Bs B}
                [] _ then
-                  %% Normaliza profundamente (sin intentar calcular primitivas aquí)
                   Normal = {EvaluateDeep Prog.call Prog}
                end
          
                if Normal == Prog.call then
-                  %% No hubo progreso real → devolver expresión (stuck en WHNF)
                   Prog.call
                else
-                  %% Reintenta evaluación completa con la call normalizada
                   {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:Normal)}
                end
             end 
          else
-            %% stuck o sin redex
             case Prog.call
             of leaf(num:N) then N
             [] var(bindings:Bs body:B) then
@@ -778,7 +676,6 @@ fun {Evaluate Prog}
    end
 end
 
-%% ✅ Evaluación profunda auxiliar
 fun {EvaluateDeep Expr Prog}
    case Expr
    of leaf(num:N) then Expr
@@ -800,16 +697,12 @@ local P1 R1 P2 R2 in
    {System.showInfo "TASK 4: Evaluate (Full Reduction) Tests"}
    {System.showInfo "========================================="}
    
-   %% Ejemplo 1 — square square 3 → 81
    {System.showInfo "TEST 1: square square 3 → 81"}
    P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    R1 = {Evaluate P1}
    {PrintProgram P1}
    {PrintResult R1}
 
-   %% Ejemplo 2 — fourtimes 2 → 8
-   %% (extiende lenguaje: var y = x*x in y+y)
-   %% Se comportará igual que (x*x)+(x*x)
    {System.showInfo "TEST 2: fourtimes 2 → 8"}
    P2 = {GraphGeneration "fun fourtimes x = x * x + x * x\nfourtimes 2"}
    R2 = {Evaluate P2}
@@ -827,19 +720,16 @@ local P1 P2 P3 in
    {System.showInfo "EXTENDED LANGUAGE Tests"}
    {System.showInfo "========================================="}
    
-   %% Múltiples parámetros
    {System.showInfo "TEST 1: Multiple parameters - sum_n 1 1 1 2 → 6"}
    P1 = {GraphGeneration "fun sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
    {PrintProgram P1}
    {PrintResult {Evaluate P1}}
 
-   %% Variable interna
    {System.showInfo "TEST 2: Internal variables - var_use 2 → 5"}
    P2 = {GraphGeneration "fun var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
    {PrintProgram P2}
    {PrintResult {Evaluate P2}}
 
-   %% Nesting complejo
    {System.showInfo "TEST 3: Complex nesting - arithmetic with nested calls"}
    P3 = {GraphGeneration "fun arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
    {PrintProgram P3}
@@ -855,7 +745,6 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {System.showInfo "🎯 FINAL TESTS - 100% CHECKLIST VERIFICATION"}
    {System.showInfo "========================================="}
 
-   %% ✅ A. Sustitución múltiple (multi-argument functions)
    {System.showInfo "TEST A1: fun const x y = x\nconst 5 9 → 5"}
    P1 = {GraphGeneration "fun const x y = x\nconst 5 9"}
    {PrintProgram P1}
@@ -871,7 +760,6 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {PrintProgram P3}
    {PrintResult {Evaluate P3}}
 
-   %% ✅ B. Evaluación de variables internas (var ... in ...)
    {System.showInfo "TEST B1: fun fourtimes x = var y = x * x in y + y\nfourtimes 2 → 8"}
    P4 = {GraphGeneration "fun fourtimes x = var y = x * x in y + y\nfourtimes 2"}
    {PrintProgram P4}
@@ -887,7 +775,6 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {PrintProgram P6}
    {PrintResult {Evaluate P6}}
 
-   %% ✅ C. Evaluación profunda recursiva
    {System.showInfo "TEST C1: fun square x = x * x\nsquare square 3 → 81"}
    P7 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    {PrintProgram P7}
@@ -903,13 +790,11 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {PrintProgram P9}
    {PrintResult {Evaluate P9}}
 
-   %% ✅ D. Casos de error (deben seguir funcionando)
    {System.showInfo "TEST D1: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
    P10 = {GraphGeneration "fun bad x = x + y\nbad 3"}
    {PrintProgram P10}
    {PrintResult {Evaluate P10}}
 
-   %% ✅ E. Test adicional — paréntesis y operadores combinados
    {System.showInfo "TEST E1: fun sqr x = (x + 1) * (x - 1)\nsqr 4 → 15"}
    local P R in
       P = {GraphGeneration "fun sqr x = (x + 1) * (x - 1)\nsqr 4"}
@@ -921,7 +806,6 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {System.showInfo "🎯 ALL TESTS COMPLETED - EXPECTED RESULTS:"}
    {System.showInfo "A1: 5, A2: 6, A3: 20, B1: 8, B2: 5, B3: 9, C1: 81, C2: 12, C3: 10, D1: WHNF"}
 
-   %% ✅ F.17–20 Radicación (raíces n-ésimas)
    {System.showInfo ""}
    {System.showInfo "=== SECCIÓN F (continuación): Radicación ==="}
    {System.showInfo ""}
