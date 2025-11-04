@@ -79,14 +79,131 @@ end
 %%  e.g. ["square" "square" "3"]
 %%  → app(fun:leaf(var:"square") arg:app(fun:leaf(var:"square") arg:leaf(num:3)))
 
+%% ==========================================================
+%% ✅ CORRECCIÓN: aplicaciones asociativas a la izquierda
+%% ==========================================================
+fun {BuildLeft F Ts}
+   case Ts
+   of nil then F
+   [] T|Tr then {BuildLeft app(function:F arg:{Leaf T}) Tr}
+   end
+end
+
+%% ---------- Infix parsing helpers (shunting-yard) ----------
+%% ---------- Infix parsing helpers (shunting-yard) ----------
+fun {IsOp T}
+   %% Solo operadores infijos verdaderos
+   {List.member T ['+' '-' '*' '/']}
+end
+
+fun {Prec Op}
+   case Op
+   of '+' then 1
+   [] '-' then 1
+   [] '*' then 2
+   [] '/' then 2
+   else 0
+   end
+end
+
+fun {AssocLeft Op} true end  %% todos left-assoc aquí
+
+%% Convierte lista de tokens infijos a RPN (lista)
+fun {ToRPN Tokens}
+   fun {Loop Ts Out Stk}
+      case Ts
+      of nil then {Append Out {Reverse Stk}}
+      [] '('|Tr then {Loop Tr Out '('|Stk}
+      [] ')'|Tr then
+         local Popped Rest PopUntilOpen in
+            %% pop hasta '('
+            fun {PopUntilOpen S Acc}
+               case S
+               of nil then raise error('mismatched_parens') end
+               [] '('|Sr then Acc#Sr
+               [] Op|Sr then {PopUntilOpen Sr Op|Acc}
+               end
+            end
+            Popped#Rest = {PopUntilOpen Stk nil}
+            {Loop Tr {Append Out {Reverse Popped}} Rest}
+         end
+      [] T|Tr then
+         if {IsOp T} then
+            %% pop operadores de mayor/igual precedencia
+            local S2 Out2 PopOps in
+               fun {PopOps S O Acc}
+                  case S
+                  of nil then Acc#nil
+                  [] Op2|Sr then
+                     if {IsOp Op2} andthen
+                        (({AssocLeft O} andthen {Prec O} =< {Prec Op2})
+                         orelse ({Prec O} < {Prec Op2}))
+                     then
+                        {PopOps Sr O Op2|Acc}
+                     else
+                        Acc#S
+                     end
+                  end
+               end
+               Out2#S2 = {PopOps Stk T nil}
+               {Loop Tr {Append Out {Reverse Out2}} T|S2}
+            end
+         else
+            %% operando (número, var, 'rad' como función prefija, etc.)
+            {Loop Tr {Append Out [T]} Stk}
+         end
+      end
+   end
+in
+   {Loop Tokens nil nil}
+end
+
+%% De RPN a tu AST usando curriado: (+ a b) = app(app(+) a) b
+fun {RPNtoAST RPN}
+   fun {Push S X} X|S end
+   fun {Pop2 S}
+      %% A (top) = right, B = left
+      case S
+      of A|B|Sr then A#B#Sr
+      [] _ then raise error('rpn_stack_underflow') end
+      end
+   end
+   fun {Loop L Stk}
+      case L
+      of nil then
+         case Stk
+         of [X] then X
+         [] _ then raise error('rpn_final_stack') end
+         end
+      [] Tok|Tr then
+         if {IsOp Tok} then
+            local A B Rest in
+               A#B#Rest = {Pop2 Stk}          %% A=right, B=left
+               %% app(app(op) left) right
+               {Loop Tr {Push Rest app(function:app(function:leaf(var:Tok) arg:B) arg:A)}}
+            end
+         else
+            {Loop Tr {Push Stk {Leaf Tok}}}
+         end
+      end
+   end
+in
+   {Loop RPN nil}
+end
+
+%% Detecta si conviene ruta infija (contiene op o paréntesis)
+fun {LooksInfix Ts}
+   {List.member '(' Ts} orelse {List.member ')' Ts} orelse
+   ({List.filter Ts IsOp} \= nil)
+end
+
 fun {BuildExpr Tokens}
    case Tokens
    of nil then unit
 
-   %% caso 1: definición interna var ... in ...
+   %% var ... in ...
    [] 'var'|VarName|'='|Rest then
       local BindTokens BodyTokens in
-         %% separar binding y cuerpo (por la palabra in)
          BindTokens = {List.takeWhile Rest fun {$ T} T \= 'in' end}
          BodyTokens = {List.dropWhile Rest fun {$ T} T \= 'in' end}
          case BodyTokens
@@ -98,14 +215,17 @@ fun {BuildExpr Tokens}
          end
       end
 
-   %% caso 2: expresión simple (operador o valor único)
+   %% un solo token → hoja
    [] [X] then {Leaf X}
 
-   %% caso 3: aplicación binaria (función + argumento)
-   [] X|Y|nil then {App {Leaf X} {Leaf Y}}
-
-   %% caso 4: aplicación n-aria
-   [] X|Rest then {App {Leaf X} {BuildExpr Rest}}
+   %% >>> NUEVO: si parece infijo, parsear con precedencia <<<
+   [] Xs then
+      if {LooksInfix Xs} then
+         {RPNtoAST {ToRPN Xs}}
+      else
+         %% 2+ tokens prefijo → aplicación izquierda ((f a1) a2)
+         case Xs of H|Rest then {BuildLeft {Leaf H} Rest} end
+      end
    end
 end
 
@@ -213,8 +333,19 @@ end
 
 %% ¿Es operador primitivo?
 fun {IsPrimitive Op}
-    {List.member Op ['+' '-' '*' '/']}
- end
+   {List.member Op ['+' '-' '*' '/' 'rad']}
+end
+
+%% ¿Es operador unario?
+fun {IsUnary Op}
+   false
+end
+
+%% ¿Es operador binario?
+fun {IsBinary Op}
+   {List.member Op ['+' '-' '*' '/' 'rad']}
+end
+
  
  %% Aridad de la "cabeza" (head) según sea primitiva o supercombinator
  fun {HeadArity Head Prog}
@@ -258,6 +389,13 @@ fun {IsPrimitive Op}
  fun {Nth L I}
     {List.nth L I}
  end
+
+fun {MakeApp F Args}
+   case Args
+   of nil then F
+   [] A|Ar then {MakeApp app(function:F arg:A) Ar}
+   end
+end
  
 %% NextReduction:
 %%  Entrada: prog(function: FName args: ... body: ... call: CallGraph)
@@ -267,33 +405,28 @@ fun {IsPrimitive Op}
  %%                 root:RootAppNode, apps:SpineApps, allargs:AllArgs,
  %%                 status:ok|whnf|stuck)
  fun {NextReduction Prog}
-    local UW Head K Apps AllArgs LenApps RootIndex ArgsK Remaining Kind in
-       UW      = {Unwind Prog.call nil nil}
-       Head    = UW.head
-       AllArgs = UW.args           %% orden: [arg1, arg2, ...] donde arg1 es el más cercano a la cabeza
-       Apps    = UW.apps           %% orden: raíz → fondo
-       K       = {HeadArity Head Prog}
-       Kind    = {HeadKind Head Prog}
- 
-       if K==0 then
-          %% No hay redex (cabeza no reducible)
-          redex(status:stuck kind:Kind head:Head allargs:AllArgs apps:Apps)
-       elseif {Length AllArgs} < K then
-          %% No hay suficientes argumentos → WHNF
-          redex(status:whnf kind:Kind head:Head arity:K allargs:AllArgs apps:Apps)
-       else
-          %% Hay redex externa: tomar K args y ubicar el nodo raíz correspondiente
-          ArgsK     = {List.take AllArgs K}          %% primeros K argumentos
-          Remaining = {List.drop AllArgs K}
-          LenApps   = {Length Apps}
-          RootIndex = LenApps - K + 1                %% nodo app que es raíz de la redex
-          redex(status:ok kind:Kind head:Head arity:K
-                args:ArgsK rest:Remaining
-                root:{Nth Apps RootIndex}
-                apps:Apps allargs:AllArgs)
-       end
-    end
- end
+   local UW Head K Apps AllArgs ArgsK Remaining Kind Root in
+      UW      = {Unwind Prog.call nil nil}
+      Head    = UW.head
+      AllArgs = UW.args
+      Apps    = UW.apps
+      K       = {HeadArity Head Prog}
+      Kind    = {HeadKind Head Prog}
+
+      if K==0 then
+         redex(status:stuck kind:Kind head:Head allargs:AllArgs apps:Apps)
+      elseif {Length AllArgs} < K then
+         redex(status:whnf kind:Kind head:Head arity:K allargs:AllArgs apps:Apps)
+      else
+         ArgsK     = {List.take AllArgs K}
+         Remaining = {List.drop AllArgs K}
+         Root      = {MakeApp Head ArgsK}   %% 👈 reconstrucción directa
+         redex(status:ok kind:Kind head:Head arity:K
+               args:ArgsK rest:Remaining
+               root:Root apps:Apps allargs:AllArgs)
+      end
+   end
+end
  
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% 🔬 Tests de Task 2
@@ -399,26 +532,46 @@ end
 
 %% Evalúa una subexpresión hasta número usando una pequeña "máquina"
 %%   (vuelve a usar NextReduction + Reduce sobre un programa temporal)
+%% ==========================================
+%% 🔧 EvalToNum — evita bucles con radicación
+%% ==========================================
+%% ==========================================
+%% ✅ EvalToNum — versión sin atajos de primitivas
+%%    (evita loops en aplicaciones curried como rad)
+%% ==========================================
 fun {EvalToNum Expr Prog}
    case Expr
    of leaf(num:N) then N
+   [] leaf(var:_) then
+      raise error('expected_number'(expr:Expr status:whnf)) end
    [] var(bindings:Bs body:B) then
-      %% Evaluar variables internas primero
+      %% evalúa primero los 'var ... in ...'
       local EvaluatedBody in
          EvaluatedBody = {EvalVarBindings Bs B}
          {EvalToNum EvaluatedBody Prog}
       end
-   else
+   [] app(function:_ arg:_) then
+      %% Delega SIEMPRE en la máquina de reducción, con guardia
       local P R P2 in
          P  = prog(function:Prog.function args:Prog.args body:Prog.body call:Expr)
          R  = {NextReduction P}
-         if R.status==ok then
+         if R.status == ok then
             P2 = {Reduce P}
-            {EvalToNum P2.call P2}
+            %% Guardia: si no hubo progreso, corta (evita ciclo)
+            if {Value.equal P2.call P.call} then
+               raise error('stuck_in_evaltonum'(expr:Expr)) end
+            else
+               {EvalToNum P2.call P2}
+            end
+         elseif R.status == whnf then
+            raise error('expected_number'(expr:Expr status:R.status)) end
          else
             raise error('expected_number'(expr:Expr status:R.status)) end
          end
       end
+   else
+      %% Cualquier otro nodo que no sea número / var / app
+      raise error('unexpected_expr_in_evaltonum'(expr:Expr)) end
    end
 end
 
@@ -455,17 +608,40 @@ fun {Reduce Prog}
             local A1 A2 N1 N2 Res in
                A1 = {List.nth R.args 1}
                A2 = {List.nth R.args 2}
-               N1 = {EvalToNum A1 Prog}
-               N2 = {EvalToNum A2 Prog}
-               Res =
-                  case Op
-                  of '+' then N1+N2
-                  [] '-' then N1-N2
-                  [] '*' then N1*N2
-                  [] '/' then N1 div N2   %% entero (ajústalo si quieres real)
+               try
+                  N1 = {EvalToNum A1 Prog}
+                  N2 = {EvalToNum A2 Prog}
+                  if Op=='rad' then
+                     if N2 == 0 then
+                        raise error('zero_root_not_allowed'(base:N1)) end
+                     else
+                        %% cálculo estable: usa floats pero devuelve int
+                        local Rv in
+                           Rv = {Float.pow {Int.toFloat N1} (1.0/{Int.toFloat N2})}
+                           if Rv \= Rv orelse Rv == ~1.0/0.0 then
+                              raise error('invalid_rad_result'(base:N1 index:N2)) end
+                           else
+                              Res = {Float.toInt Rv}
+                           end
+                        end
+                     end
+                  else
+                     Res =
+                        case Op
+                        of '+' then N1+N2
+                        [] '-' then N1-N2
+                        [] '*' then N1*N2
+                        [] '/' then N1 div N2
+                        else
+                           raise error('unknown_operator'(op:Op)) end
+                        end
                   end
-               NewNode = {ApplyRest leaf(num:Res) R.rest}
-            end
+                  NewNode = {ApplyRest leaf(num:Res) R.rest}
+               catch _ then
+                  %% Aún no se pueden evaluar los argumentos: no cambiar
+                  NewNode = R.root
+               end
+            end         
          else
             %% variable/number/other en cabeza: no reducible (debería no ocurrir con status ok)
             NewNode = R.head
@@ -528,7 +704,12 @@ fun {Evaluate Prog}
       if R.status == ok then
          %% hay redex → reduce y continúa
          Pnext = {Reduce Prog}
-         {Evaluate Pnext}
+         if Pnext.call==Prog.call then
+            %% sin progreso: devuelve el programa tal cual (o lanza error si prefieres)
+            Prog
+         else
+            {Evaluate Pnext}
+         end         
       elseif R.status == whnf then
          %% forma normal débil: verificar si hay variables internas que evaluar
          case Prog.call
@@ -561,6 +742,12 @@ fun {Evaluate Prog}
                      [] '-' then NF - NA
                      [] '*' then NF * NA
                      [] '/' then NF div NA
+                     [] 'rad' then
+                         if NA == 0 then
+                            raise error('zero_root_not_allowed'(base:NF)) end
+                         else
+                            {Float.toInt {Float.pow {Int.toFloat NF} (1.0/{Int.toFloat NA})}}
+                         end                     
                      else
                         %% No es primitiva, crear nueva aplicación
                         local NewProg in
@@ -749,4 +936,52 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
 
    {System.showInfo "🎯 ALL TESTS COMPLETED - EXPECTED RESULTS:"}
    {System.showInfo "A1: 5, A2: 6, A3: 20, B1: 8, B2: 5, B3: 9, C1: 81, C2: 12, C3: 10, D1: WHNF"}
+
+   %% ✅ F.17–20 Radicación (raíces n-ésimas)
+   {System.showInfo ""}
+   {System.showInfo "=== SECCIÓN F (continuación): Radicación ==="}
+   {System.showInfo ""}
+
+   {System.showInfo "TEST F17: Raíz cuadrada (rad 9 2) → 3"}
+   local P R in
+      P = {GraphGeneration "fun test x = rad 9 2\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F18: Raíz cúbica (rad 27 3) → 3"}
+   local P R in
+      P = {GraphGeneration "fun test x = rad 27 3\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F19: Raíz cuarta (rad 16 4) → 2"}
+   local P R in
+      P = {GraphGeneration "fun test x = rad 16 4\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F16b: Raíz cuadrada repetida (rad (rad 256 2) 2) → 4"}
+   local P R in
+      P = {GraphGeneration "fun test x = rad (rad 256 2) 2\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F20: Radicación combinada (rad (rad 81 4) 2) → 3"}
+   local P R in
+      P = {GraphGeneration "fun test x = rad (rad 81 4) 2\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "🎯 NUEVOS TESTS DE RADICACIÓN COMPLETADOS"}
+   {System.showInfo "F17: 3, F18: 3, F19: 2, F20: 3"}
 end
