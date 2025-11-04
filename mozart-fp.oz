@@ -126,9 +126,12 @@ fun {GraphGeneration ProgramStr}
       TokensDef  = {CleanTokens {Str2Lst {List.nth Lines 1}}}
       TokensCall = {CleanTokens {Str2Lst {List.nth Lines 2}}}
 
-      %% expect "function <name> <arg1> <arg2> ... = <body>"
-      if {List.nth TokensDef 1} \= function then
-         raise error('Definition must start with function') end
+      %% expect "fun <name> <arg1> <arg2> ... = <body>" or "function <name> ..."
+      local FirstToken in
+         FirstToken = {List.nth TokensDef 1}
+         if FirstToken \= 'fun' andthen FirstToken \= function then
+            raise error('Definition must start with fun or function') end
+         end
       end
 
       FName = {List.nth TokensDef 2}
@@ -192,11 +195,11 @@ end
 %% ────────────────────────────────────────────────
 
 local G1 G2 in
-   {System.showInfo "TEST 1: square square 3"}
-   G1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   {System.showInfo "TEST 1: square square 3 (using 'fun' instead of 'function')"}
+   G1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    {PrintProgram G1}
 
-   {System.showInfo "TEST 2: twice 5"}
+   {System.showInfo "TEST 2: twice 5 (using 'function')"}
    G2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
    {PrintProgram G2}
 end
@@ -734,6 +737,15 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    P10 = {GraphGeneration "function bad x = x + y\nbad 3"}
    {PrintProgram P10}
    {PrintResult {Evaluate P10}}
+
+   %% ✅ E. Test adicional — paréntesis y operadores combinados
+   {System.showInfo "TEST E1: function sqr x = (x + 1) * (x - 1)\nsqr 4 → 15"}
+   local P R in
+      P = {GraphGeneration "fun sqr x = (x + 1) * (x - 1)\nsqr 4"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
 
    {System.showInfo "🎯 ALL TESTS COMPLETED - EXPECTED RESULTS:"}
    {System.showInfo "A1: 5, A2: 6, A3: 20, B1: 8, B2: 5, B3: 9, C1: 81, C2: 12, C3: 10, D1: WHNF"}
