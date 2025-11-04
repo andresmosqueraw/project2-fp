@@ -126,7 +126,7 @@ fun {GraphGeneration ProgramStr}
       TokensDef  = {CleanTokens {Str2Lst {List.nth Lines 1}}}
       TokensCall = {CleanTokens {Str2Lst {List.nth Lines 2}}}
 
-      %% expect "fun <name> <arg1> <arg2> ... = <body>" or "function <name> ..."
+      %% expect "fun <name> <arg1> <arg2> ... = <body>" or "fun <name> ..."
       local FirstToken in
          FirstToken = {List.nth TokensDef 1}
          if FirstToken \= 'fun' andthen FirstToken \= function then
@@ -200,7 +200,7 @@ local G1 G2 in
    {PrintProgram G1}
 
    {System.showInfo "TEST 2: twice 5 (using 'function')"}
-   G2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+   G2 = {GraphGeneration "fun twice x = x + x\ntwice 5"}
    {PrintProgram G2}
 end
 
@@ -305,14 +305,14 @@ local P1 R1 P2 R2 P3 R3 in
    
    %% square square 3
    {System.showInfo "TEST 1: square square 3"}
-   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    R1 = {NextReduction P1}
    {PrintProgram P1}
    {PrintRedex R1}
 
    %% twice 5
    {System.showInfo "TEST 2: twice 5"}
-   P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+   P2 = {GraphGeneration "fun twice x = x + x\ntwice 5"}
    R2 = {NextReduction P2}
    {PrintProgram P2}
    {PrintRedex R2}
@@ -488,7 +488,7 @@ local P1 S1 P2 S2 S2_2 P3 S3 in
    
    %% 1) (square square) 3 → ( (square 3) * (square 3) )
    {System.showInfo "TEST 1: (square square) 3 → ( (square 3) * (square 3) )"}
-   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    S1 = {Reduce P1}
    {PrintProgram P1}
    {System.showInfo "After one reduction:"}
@@ -496,7 +496,7 @@ local P1 S1 P2 S2 S2_2 P3 S3 in
 
    %% 2) (twice 5) → (5 + 5) y una segunda reducción (primitiva)
    {System.showInfo "TEST 2: (twice 5) → (5 + 5) → 10"}
-   P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+   P2 = {GraphGeneration "fun twice x = x + x\ntwice 5"}
    S2 = {Reduce P2}
    S2_2 = {Reduce S2}
    {PrintProgram P2}
@@ -631,7 +631,7 @@ local P1 R1 P2 R2 in
    
    %% Ejemplo 1 — square square 3 → 81
    {System.showInfo "TEST 1: square square 3 → 81"}
-   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   P1 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    R1 = {Evaluate P1}
    {PrintProgram P1}
    {PrintResult R1}
@@ -640,7 +640,7 @@ local P1 R1 P2 R2 in
    %% (extiende lenguaje: var y = x*x in y+y)
    %% Se comportará igual que (x*x)+(x*x)
    {System.showInfo "TEST 2: fourtimes 2 → 8"}
-   P2 = {GraphGeneration "function fourtimes x = x * x + x * x\nfourtimes 2"}
+   P2 = {GraphGeneration "fun fourtimes x = x * x + x * x\nfourtimes 2"}
    R2 = {Evaluate P2}
    {PrintProgram P2}
    {PrintResult R2}
@@ -658,19 +658,19 @@ local P1 P2 P3 in
    
    %% Múltiples parámetros
    {System.showInfo "TEST 1: Multiple parameters - sum_n 1 1 1 2 → 6"}
-   P1 = {GraphGeneration "function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
+   P1 = {GraphGeneration "fun sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
    {PrintProgram P1}
    {PrintResult {Evaluate P1}}
 
    %% Variable interna
    {System.showInfo "TEST 2: Internal variables - var_use 2 → 5"}
-   P2 = {GraphGeneration "function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
+   P2 = {GraphGeneration "fun var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
    {PrintProgram P2}
    {PrintResult {Evaluate P2}}
 
    %% Nesting complejo
    {System.showInfo "TEST 3: Complex nesting - arithmetic with nested calls"}
-   P3 = {GraphGeneration "function arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
+   P3 = {GraphGeneration "fun arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
    {PrintProgram P3}
    {PrintResult {Evaluate P3}}
 end
@@ -685,61 +685,61 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
    {System.showInfo "========================================="}
 
    %% ✅ A. Sustitución múltiple (multi-argument functions)
-   {System.showInfo "TEST A1: function const x y = x\nconst 5 9 → 5"}
-   P1 = {GraphGeneration "function const x y = x\nconst 5 9"}
+   {System.showInfo "TEST A1: fun const x y = x\nconst 5 9 → 5"}
+   P1 = {GraphGeneration "fun const x y = x\nconst 5 9"}
    {PrintProgram P1}
    {PrintResult {Evaluate P1}}
 
-   {System.showInfo "TEST A2: function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2 → 6"}
-   P2 = {GraphGeneration "function sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
+   {System.showInfo "TEST A2: fun sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2 → 6"}
+   P2 = {GraphGeneration "fun sum_n x y z n = (x + y + z) * n\nsum_n 1 1 1 2"}
    {PrintProgram P2}
    {PrintResult {Evaluate P2}}
 
-   {System.showInfo "TEST A3: function mult x y z = (x + y) * z\nmult 2 3 4 → 20"}
-   P3 = {GraphGeneration "function mult x y z = (x + y) * z\nmult 2 3 4"}
+   {System.showInfo "TEST A3: fun mult x y z = (x + y) * z\nmult 2 3 4 → 20"}
+   P3 = {GraphGeneration "fun mult x y z = (x + y) * z\nmult 2 3 4"}
    {PrintProgram P3}
    {PrintResult {Evaluate P3}}
 
    %% ✅ B. Evaluación de variables internas (var ... in ...)
-   {System.showInfo "TEST B1: function fourtimes x = var y = x * x in y + y\nfourtimes 2 → 8"}
-   P4 = {GraphGeneration "function fourtimes x = var y = x * x in y + y\nfourtimes 2"}
+   {System.showInfo "TEST B1: fun fourtimes x = var y = x * x in y + y\nfourtimes 2 → 8"}
+   P4 = {GraphGeneration "fun fourtimes x = var y = x * x in y + y\nfourtimes 2"}
    {PrintProgram P4}
    {PrintResult {Evaluate P4}}
 
-   {System.showInfo "TEST B2: function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2 → 5"}
-   P5 = {GraphGeneration "function var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
+   {System.showInfo "TEST B2: fun var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2 → 5"}
+   P5 = {GraphGeneration "fun var_use x = var y = x * x in var z = y * 2 in z - 3\nvar_use 2"}
    {PrintProgram P5}
    {PrintResult {Evaluate P5}}
 
-   {System.showInfo "TEST B3: function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2 → 9"}
-   P6 = {GraphGeneration "function var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2"}
+   {System.showInfo "TEST B3: fun var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2 → 9"}
+   P6 = {GraphGeneration "fun var_chain x = var y = x + 1 in var z = y * 2 in z + y\nvar_chain 2"}
    {PrintProgram P6}
    {PrintResult {Evaluate P6}}
 
    %% ✅ C. Evaluación profunda recursiva
-   {System.showInfo "TEST C1: function square x = x * x\nsquare square 3 → 81"}
-   P7 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+   {System.showInfo "TEST C1: fun square x = x * x\nsquare square 3 → 81"}
+   P7 = {GraphGeneration "fun square x = x * x\nsquare square 3"}
    {PrintProgram P7}
    {PrintResult {Evaluate P7}}
 
-   {System.showInfo "TEST C2: function nested x = x + (x * x)\nnested 3 → 12"}
-   P8 = {GraphGeneration "function nested x = x + (x * x)\nnested 3"}
+   {System.showInfo "TEST C2: fun nested x = x + (x * x)\nnested 3 → 12"}
+   P8 = {GraphGeneration "fun nested x = x + (x * x)\nnested 3"}
    {PrintProgram P8}
    {PrintResult {Evaluate P8}}
 
-   {System.showInfo "TEST C3: function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3 → 10"}
-   P9 = {GraphGeneration "function doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3"}
+   {System.showInfo "TEST C3: fun doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3 → 10"}
+   P9 = {GraphGeneration "fun doubleadd x y = (x + y) + (x + y)\ndoubleadd 2 3"}
    {PrintProgram P9}
    {PrintResult {Evaluate P9}}
 
    %% ✅ D. Casos de error (deben seguir funcionando)
-   {System.showInfo "TEST D1: function bad x = x + y\nbad 3 → WHNF (y unknown)"}
-   P10 = {GraphGeneration "function bad x = x + y\nbad 3"}
+   {System.showInfo "TEST D1: fun bad x = x + y\nbad 3 → WHNF (y unknown)"}
+   P10 = {GraphGeneration "fun bad x = x + y\nbad 3"}
    {PrintProgram P10}
    {PrintResult {Evaluate P10}}
 
    %% ✅ E. Test adicional — paréntesis y operadores combinados
-   {System.showInfo "TEST E1: function sqr x = (x + 1) * (x - 1)\nsqr 4 → 15"}
+   {System.showInfo "TEST E1: fun sqr x = (x + 1) * (x - 1)\nsqr 4 → 15"}
    local P R in
       P = {GraphGeneration "fun sqr x = (x + 1) * (x - 1)\nsqr 4"}
       R = {Evaluate P}
