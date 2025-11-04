@@ -104,7 +104,7 @@ fun {BuildExpr Tokens}
    %% caso 3: aplicación binaria (función + argumento)
    [] X|Y|nil then {App {Leaf X} {Leaf Y}}
 
-   %% caso 4: aplicación n-aria
+   %% caso 4: aplicación n-aria (asociación a la derecha)
    [] X|Rest then {App {Leaf X} {BuildExpr Rest}}
    end
 end
@@ -213,14 +213,25 @@ end
 
 %% ¿Es operador primitivo?
 fun {IsPrimitive Op}
-    {List.member Op ['+' '-' '*' '/']}
+    {List.member Op ['+' '-' '*' '/' 'mod' 'div' 'pow' 'sqrt' 'log']}
+ end
+
+%% ¿Es operador unario?
+fun {IsUnary Op}
+    {List.member Op ['sqrt' 'log']}
+ end
+
+%% ¿Es operador binario?
+fun {IsBinary Op}
+    {List.member Op ['+' '-' '*' '/' 'mod' 'div' 'pow']}
  end
  
  %% Aridad de la "cabeza" (head) según sea primitiva o supercombinator
  fun {HeadArity Head Prog}
     case Head
     of leaf(var:Op) then
-       if {IsPrimitive Op} then 2
+       if {IsUnary Op} then 1
+       elseif {IsBinary Op} then 2
        elseif Op==Prog.function then 1      %% tu minilenguaje: 1 parámetro
        else 0                                %% variable libre / desconocida
        end
@@ -259,7 +270,7 @@ fun {IsPrimitive Op}
     {List.nth L I}
  end
  
-%% NextReduction:
+ %% NextReduction:
 %%  Entrada: prog(function: FName args: ... body: ... call: CallGraph)
  %%  Salida:  record con la info de la redex externa
  %%           redex(kind:primitive/supercombinator/..., head:Head,
@@ -295,37 +306,37 @@ fun {IsPrimitive Op}
     end
  end
  
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 🔬 Tests de Task 2
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-
-local P1 R1 P2 R2 P3 R3 in
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ %% 🔬 Tests de Task 2
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+ local P1 R1 P2 R2 P3 R3 in
    {System.showInfo "TASK 2: NextReduction Tests"}
    {System.showInfo "========================================="}
    
-   %% square square 3
+    %% square square 3
    {System.showInfo "TEST 1: square square 3"}
-   P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
-   R1 = {NextReduction P1}
+    P1 = {GraphGeneration "function square x = x * x\nsquare square 3"}
+    R1 = {NextReduction P1}
    {PrintProgram P1}
    {PrintRedex R1}
-
-   %% twice 5
+ 
+    %% twice 5
    {System.showInfo "TEST 2: twice 5"}
-   P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
-   R2 = {NextReduction P2}
+    P2 = {GraphGeneration "function twice x = x + x\ntwice 5"}
+    R2 = {NextReduction P2}
    {PrintProgram P2}
    {PrintRedex R2}
-
-   %% + 2 (falta arg) → WHNF sobre primitiva
+ 
+    %% + 2 (falta arg) → WHNF sobre primitiva
    {System.showInfo "TEST 3: + 2 (missing argument → WHNF)"}
    P3 = prog(function:'f' args:[x]
-             body:leaf(var:x)
-             call:app(function:leaf(var:'+') arg:leaf(num:2)))
-   R3 = {NextReduction P3}
+              body:leaf(var:x)
+              call:app(function:leaf(var:'+') arg:leaf(num:2)))
+    R3 = {NextReduction P3}
    {PrintProgram P3}
    {PrintRedex R3}
-end
+ end
  
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -446,25 +457,59 @@ fun {Reduce Prog}
                end
                local Instanced in
                   Instanced = {SubstMultiple Prog.body Prog.args R.args}
-                  %% si hay más argumentos en la aplicación externa, reaplícalos
+               %% si hay más argumentos en la aplicación externa, reaplícalos
                   NewNode = {ApplyRest Instanced R.rest}
                end
-            end            
+            end
          [] primitive(Op) then
-            %% Evaluar ambos argumentos a número y calcular
-            local A1 A2 N1 N2 Res in
-               A1 = {List.nth R.args 1}
-               A2 = {List.nth R.args 2}
-               N1 = {EvalToNum A1 Prog}
-               N2 = {EvalToNum A2 Prog}
-               Res =
-                  case Op
-                  of '+' then N1+N2
-                  [] '-' then N1-N2
-                  [] '*' then N1*N2
-                  [] '/' then N1 div N2   %% entero (ajústalo si quieres real)
+            %% Manejar operaciones unarias y binarias
+            if {IsUnary Op} then
+               %% Operación unaria: sqrt, log
+               local A1 N1 Res in
+                  %% Si hay argumentos restantes, aplícalos al argumento unario antes de evaluar
+                  A1 = {ApplyRest {List.nth R.args 1} R.rest}
+                  try
+                     N1 = {EvalToNum A1 Prog}
+                     if Op=='log' andthen N1=<0 then
+                        raise error('log_negative_or_zero'(value:N1)) end
+                     else
+                        case Op
+                        of 'sqrt' then
+                           {Float.toInt {Float.sqrt {Int.toFloat N1}}}
+                        [] 'log' then
+                           {Float.toInt {Float.log {Int.toFloat N1}}}
+                        end
+                     end                     
+                  catch _ then
+                     %% No es numérico aún: dejar como aplicación primitiva con su argumento
+                     NewNode = app(function:leaf(var:Op) arg:A1)
                   end
-               NewNode = {ApplyRest leaf(num:Res) R.rest}
+               end
+            else
+               %% Operación binaria: +, -, *, /, mod, div, pow
+               local A1 A2 N1 N2 Res in
+                  %% Si hay argumentos restantes, distribuirlos en ambos argumentos binarios
+                  A1 = {ApplyRest {List.nth R.args 1} R.rest}
+                  A2 = {ApplyRest {List.nth R.args 2} R.rest}
+                  try
+                     N1 = {EvalToNum A1 Prog}
+                     N2 = {EvalToNum A2 Prog}
+                     Res =
+                        case Op
+                        of '+' then N1+N2
+                        [] '-' then N1-N2
+                        [] '*' then N1*N2
+                        [] '/' then N1 div N2   %% división entera
+                        [] 'div' then N1 div N2 %% división entera explícita
+                        [] 'mod' then N1 mod N2 %% módulo
+                        [] 'pow' then {Float.toInt {Float.pow {Int.toFloat N1} {Int.toFloat N2}}}
+                        end
+                     NewNode = leaf(num:Res)
+                  catch _ then
+                     %% No numérico aún: reconstruir aplicación primitiva con sus argumentos
+                     NewNode = app(function:app(function:leaf(var:Op) arg:A1) arg:A2)
+                  end
+               end
             end
          else
             %% variable/number/other en cabeza: no reducible (debería no ocurrir con status ok)
@@ -524,74 +569,123 @@ end
 %% ✅ FIX: Evaluación profunda recursiva que siempre devuelve números
 fun {Evaluate Prog}
    local R Pnext in
+      {System.showInfo "[Evaluate] enter call="#{Value.toVirtualString Prog.call 0 0}}
       R = {NextReduction Prog}
+      {System.showInfo "[Evaluate] status="#{Value.toVirtualString R.status 0 0}}
+      if {HasFeature R kind} then {System.showInfo "[Evaluate] kind="#{Value.toVirtualString R.kind 0 0}} end
       if R.status == ok then
          %% hay redex → reduce y continúa
+         {System.showInfo "[Evaluate] reducing one step"}
          Pnext = {Reduce Prog}
+         {System.showInfo "[Evaluate] after reduce call="#{Value.toVirtualString Pnext.call 0 0}}
          {Evaluate Pnext}
       elseif R.status == whnf then
          %% forma normal débil: verificar si hay variables internas que evaluar
+         {System.showInfo "[Evaluate] WHNF, inspecting call"}
          case Prog.call
          of var(bindings:Bs body:B) then
             %% Evaluar variables internas
+            {System.showInfo "[Evaluate] var-in detected, bindings="#{Value.toVirtualString Bs 0 0}}
             local EvaluatedBody in
                EvaluatedBody = {EvalVarBindings Bs B}
+               {System.showInfo "[Evaluate] var-body evaluated="#{Value.toVirtualString EvaluatedBody 0 0}}
                case EvaluatedBody
                of leaf(num:N) then N
                [] _ then
                   %% Crear nuevo programa con el cuerpo evaluado y continuar
                   local NewProg in
                      NewProg = prog(function:Prog.function args:Prog.args body:Prog.body call:EvaluatedBody)
+                     {System.showInfo "[Evaluate] continue with evaluated body"}
                      {Evaluate NewProg}
                   end
                end
             end
          [] app(function:F arg:A) then
-            %% Evaluar recursivamente función y argumento
-            local EvalF EvalA in
-               EvalF = {EvaluateDeep F Prog}
-               EvalA = {EvaluateDeep A Prog}
-               case EvalF#EvalA
-               of leaf(num:NF)#leaf(num:NA) then
-                  %% Aplicar operación si es primitiva
-                  case F
-                  of leaf(var:Op) then
-                     case Op
-                     of '+' then NF + NA
-                     [] '-' then NF - NA
-                     [] '*' then NF * NA
-                     [] '/' then NF div NA
-                     else
-                        %% No es primitiva, crear nueva aplicación
-                        local NewProg in
-                           NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
-                                         call:app(function:EvalF arg:EvalA))
-                           {Evaluate NewProg}
+            %% Desenrollar esta aplicación (no todo el Prog.call) para ver si es una primitiva completa
+            local UW in
+               {System.showInfo "[Evaluate] app detected. F="#{Value.toVirtualString F 0 0}}
+               {System.showInfo "[Evaluate] app arg A="#{Value.toVirtualString A 0 0}}
+               UW = {Unwind app(function:F arg:A) nil nil}
+               {System.showInfo "[Evaluate] UW.head="#{Value.toVirtualString UW.head 0 0}}
+               {System.showInfo "[Evaluate] UW.args="#{Value.toVirtualString UW.args 0 0}}
+               case UW.head
+               of leaf(var:Op) then
+                  {System.showInfo "[Evaluate] head var="#{Value.toVirtualString Op 0 0}}
+                  if {IsUnary Op} andthen {Length UW.args} >= 1 then
+                     %% Operación unaria completa
+                     local A1 N1 in
+                        A1 = {List.nth UW.args 1}
+                        {System.showInfo "[Evaluate] unary A1="#{Value.toVirtualString A1 0 0}}
+                        N1 = {EvalToNum A1 Prog}
+                        {System.showInfo "[Evaluate] unary N1="#{Value.toVirtualString N1 0 0}}
+                        if Op=='log' andthen N1=<0 then
+                           raise error('log_negative_or_zero'(value:N1)) end
+                        else
+                           case Op
+                           of 'sqrt' then
+                              {Float.toInt {Float.sqrt {Int.toFloat N1}}}
+                           [] 'log' then
+                              {Float.toInt {Float.log {Int.toFloat N1}}}
+                           end
+                        end
+                     end                  
+                  elseif {IsBinary Op} andthen {Length UW.args} >= 2 then
+                     %% Operación binaria completa
+                     local A1 A2 N1 N2 in
+                        A1 = {List.nth UW.args 1}
+                        A2 = {List.nth UW.args 2}
+                        {System.showInfo "[Evaluate] binary A1="#{Value.toVirtualString A1 0 0}}
+                        {System.showInfo "[Evaluate] binary A2="#{Value.toVirtualString A2 0 0}}
+                        N1 = {EvalToNum A1 Prog}
+                        N2 = {EvalToNum A2 Prog}
+                        {System.showInfo "[Evaluate] binary N1="#{Value.toVirtualString N1 0 0}}
+                        {System.showInfo "[Evaluate] binary N2="#{Value.toVirtualString N2 0 0}}
+                        case Op
+                        of '+' then N1 + N2
+                        [] '-' then N1 - N2
+                        [] '*' then N1 * N2
+                        [] '/' then N1 div N2
+                        [] 'div' then N1 div N2
+                        [] 'mod' then N1 mod N2
+                        [] 'pow' then
+                           {Float.toInt {Float.pow {Int.toFloat N1} {Int.toFloat N2}}}
                         end
                      end
                   else
-                     %% No es primitiva, crear nueva aplicación
-                     local NewProg in
+                     %% No es primitiva completa, evaluar recursivamente usando EvaluateDeep
+                     local EvalF EvalA NewProg in
+                        EvalF = {EvaluateDeep F Prog}
+                        EvalA = {EvaluateDeep A Prog}
+                        {System.showInfo "[Evaluate] not complete primitive; EvalF="#{Value.toVirtualString EvalF 0 0}}
+                        {System.showInfo "[Evaluate] EvalA="#{Value.toVirtualString EvalA 0 0}}
                         NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
                                       call:app(function:EvalF arg:EvalA))
+                        {System.showInfo "[Evaluate] recurse with rebuilt app"}
                         {Evaluate NewProg}
                      end
                   end
-               [] _#_ then
-                  %% Al menos uno no es número, crear nueva aplicación
-                  local NewProg in
+               else
+                  %% La cabeza no es una primitiva, evaluar recursivamente
+                  local EvalF EvalA NewProg in
+                     EvalF = {EvaluateDeep F Prog}
+                     EvalA = {EvaluateDeep A Prog}
+                     {System.showInfo "[Evaluate] head not primitive; EvalF="#{Value.toVirtualString EvalF 0 0}}
+                     {System.showInfo "[Evaluate] EvalA="#{Value.toVirtualString EvalA 0 0}}
                      NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
                                    call:app(function:EvalF arg:EvalA))
+                     {System.showInfo "[Evaluate] recurse non-primitive"}
                      {Evaluate NewProg}
                   end
                end
             end
          [] _ then
             %% No es var ni app, devolver el grafo
+            {System.showInfo "[Evaluate] WHNF default → return graph"}
             Prog
          end
       else
          %% stuck o sin redex: devolver el valor si es número
+         {System.showInfo "[Evaluate] stuck/other; return if number"}
          case Prog.call
          of leaf(num:N) then N
          [] _ then Prog
@@ -747,6 +841,148 @@ local P1 P2 P3 P4 P5 P6 P7 P8 P9 P10 in
       {PrintResult R}
    end
 
+   %% ✅ F. Operaciones aritméticas avanzadas
+   {System.showInfo ""}
+   {System.showInfo "=== SECCIÓN F: Operaciones aritméticas avanzadas ==="}
+   {System.showInfo ""}
+   {System.showInfo "TEST F1: Modulo - mod 17 5 → 2"}
+   try
+      local P R in
+         {System.showInfo "  Generando grafo..."}
+         P = {GraphGeneration "function test x = mod 17 5\ntest 0"}
+         {System.showInfo "  Evaluando..."}
+         R = {Evaluate P}
+         {PrintProgram P}
+         {PrintResult R}
+         {System.showInfo "  F1 completado"}
+      end
+   catch E then
+      {System.showInfo "ERROR en F1: "#{Value.toVirtualString E 0 0}}
+   end
+   {System.showInfo "Fin de F1"}
+
+   {System.showInfo "TEST F2: Modulo - mod 20 6 → 2"}
+   local P R in
+      P = {GraphGeneration "function test x = mod 20 6\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F3: División entera explícita - div 17 5 → 3"}
+   local P R in
+      P = {GraphGeneration "function test x = div 17 5\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F4: División entera explícita - div 20 6 → 3"}
+   local P R in
+      P = {GraphGeneration "function test x = div 20 6\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F5: Potencia - pow 2 3 → 8"}
+   local P R in
+      P = {GraphGeneration "function test x = pow 2 3\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F6: Potencia - pow 3 4 → 81"}
+   local P R in
+      P = {GraphGeneration "function test x = pow 3 4\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F7: Potencia - pow 5 2 → 25"}
+   local P R in
+      P = {GraphGeneration "function test x = pow 5 2\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F8: Raíz cuadrada - sqrt 16 → 4"}
+   local P R in
+      P = {GraphGeneration "function test x = sqrt 16\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F9: Raíz cuadrada - sqrt 25 → 5"}
+   local P R in
+      P = {GraphGeneration "function test x = sqrt 25\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F10: Raíz cuadrada - sqrt 100 → 10"}
+   local P R in
+      P = {GraphGeneration "function test x = sqrt 100\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F11: Logaritmo - log 10 → ~2 (aproximadamente)"}
+   local P R in
+      P = {GraphGeneration "function test x = log 10\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F12: Logaritmo - log 100 → ~4 (aproximadamente)"}
+   local P R in
+      P = {GraphGeneration "function test x = log 100\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F13: Operaciones combinadas - (pow 2 3) + (sqrt 16) → 12"}
+   local P R in
+      P = {GraphGeneration "function test x = (pow 2 3) + (sqrt 16)\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F14: Operaciones combinadas - (mod 17 5) * (div 20 6) → 6"}
+   local P R in
+      P = {GraphGeneration "function test x = (mod 17 5) * (div 20 6)\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F15: Operaciones combinadas - sqrt (pow 2 4) → 4"}
+   local P R in
+      P = {GraphGeneration "function test x = sqrt (pow 2 4)\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
+   {System.showInfo "TEST F16: Operaciones combinadas - pow (sqrt 25) 2 → 25"}
+   local P R in
+      P = {GraphGeneration "function test x = pow (sqrt 25) 2\ntest 0"}
+      R = {Evaluate P}
+      {PrintProgram P}
+      {PrintResult R}
+   end
+
    {System.showInfo "🎯 ALL TESTS COMPLETED - EXPECTED RESULTS:"}
    {System.showInfo "A1: 5, A2: 6, A3: 20, B1: 8, B2: 5, B3: 9, C1: 81, C2: 12, C3: 10, D1: WHNF"}
+   {System.showInfo "F1: 2, F2: 2, F3: 3, F4: 3, F5: 8, F6: 81, F7: 25, F8: 4, F9: 5, F10: 10"}
+   {System.showInfo "F11: ~2, F12: ~4, F13: 12, F14: 6, F15: 4, F16: 25"}
 end
