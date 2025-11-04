@@ -13,18 +13,19 @@ declare
 
 fun {Str2Lst S}
    local
-      fun {CleanChars Cs}
+      fun {InsDelims Cs}
          case Cs
          of nil then nil
          [] C|Cr then
             if C==&( orelse C==&) orelse C==&, then
-               & | {CleanChars Cr}  %% reemplaza por espacio
+               %% inserta espacio, el propio carácter, espacio
+               & | C | & | {InsDelims Cr}
             else
-               C | {CleanChars Cr}
+               C | {InsDelims Cr}
             end
          end
       end
-      Cleaned = {CleanChars {VirtualString.toString S}}
+      Cleaned = {InsDelims {VirtualString.toString S}}
    in
       {Map {String.tokens Cleaned & }
          fun {$ L} {String.toAtom L} end}
@@ -79,13 +80,13 @@ end
 %%  e.g. ["square" "square" "3"]
 %%  → app(fun:leaf(var:"square") arg:app(fun:leaf(var:"square") arg:leaf(num:3)))
 
-%% ==========================================================
-%% ✅ CORRECCIÓN: aplicaciones asociativas a la izquierda
-%% ==========================================================
-fun {BuildLeft F Ts}
+%% Construye aplicación asociativa a la derecha:
+%% ["square" "square" "3"] ==> app(function:leaf(var:square)
+%%                                 arg:app(function:leaf(var:square) arg:leaf(num:3)))
+fun {BuildRight Ts}
    case Ts
-   of nil then F
-   [] T|Tr then {BuildLeft app(function:F arg:{Leaf T}) Tr}
+   of [X] then {Leaf X}
+   [] H|Tr then app(function:{Leaf H} arg:{BuildRight Tr})
    end
 end
 
@@ -112,7 +113,7 @@ fun {AssocLeft Op} true end  %% todos left-assoc aquí
 fun {ToRPN Tokens}
    fun {Loop Ts Out Stk}
       case Ts
-      of nil then {Append Out {Reverse Stk}}
+      of nil then {Append Out Stk}
       [] '('|Tr then {Loop Tr Out '('|Stk}
       [] ')'|Tr then
          local Popped Rest PopUntilOpen in
@@ -125,7 +126,7 @@ fun {ToRPN Tokens}
                end
             end
             Popped#Rest = {PopUntilOpen Stk nil}
-            {Loop Tr {Append Out {Reverse Popped}} Rest}
+            {Loop Tr {Append Out Popped} Rest}
          end
       [] T|Tr then
          if {IsOp T} then
@@ -146,7 +147,7 @@ fun {ToRPN Tokens}
                   end
                end
                Out2#S2 = {PopOps Stk T nil}
-               {Loop Tr {Append Out {Reverse Out2}} T|S2}
+               {Loop Tr {Append Out Out2} T|S2}
             end
          else
             %% operando (número, var, 'rad' como función prefija, etc.)
@@ -193,8 +194,22 @@ end
 
 %% Detecta si conviene ruta infija (contiene op o paréntesis)
 fun {LooksInfix Ts}
-   {List.member '(' Ts} orelse {List.member ')' Ts} orelse
+   %% Solo considera operadores infijos verdaderos
    ({List.filter Ts IsOp} \= nil)
+end
+
+fun {BuildLeftFrom F Ts}
+   case Ts
+   of nil then F
+   [] H|T then {BuildLeftFrom app(function:F arg:{Leaf H}) T}
+   end
+end
+
+fun {BuildLeft Ts}
+   case Ts
+   of [X] then {Leaf X}
+   [] H|T then {BuildLeftFrom {Leaf H} T}
+   end
 end
 
 fun {BuildExpr Tokens}
@@ -218,14 +233,22 @@ fun {BuildExpr Tokens}
    %% un solo token → hoja
    [] [X] then {Leaf X}
 
-   %% >>> NUEVO: si parece infijo, parsear con precedencia <<<
    [] Xs then
       if {LooksInfix Xs} then
          {RPNtoAST {ToRPN Xs}}
       else
-         %% 2+ tokens prefijo → aplicación izquierda ((f a1) a2)
-         case Xs of H|Rest then {BuildLeft {Leaf H} Rest} end
-      end
+         %% Prefijo: elimina paréntesis "decorativos"
+         local Y in
+            Y = {List.filter Xs fun {$ T} T \= '(' andthen T \= ')' end}
+            if Y \= nil andthen {IsOp {List.nth Y 1}} then
+               %% Operador primitivo en prefijo → ( (op a) b )  (asocia a la IZQUIERDA)
+               {BuildLeft Y}
+            else
+               %% Identificadores/unarios → asocia a la DERECHA
+               {BuildRight Y}
+            end
+         end
+      end   
    end
 end
 
@@ -558,7 +581,7 @@ fun {EvalToNum Expr Prog}
          if R.status == ok then
             P2 = {Reduce P}
             %% Guardia: si no hubo progreso, corta (evita ciclo)
-            if {Value.equal P2.call P.call} then
+            if P2.call == P.call then
                raise error('stuck_in_evaltonum'(expr:Expr)) end
             else
                {EvalToNum P2.call P2}
@@ -697,112 +720,73 @@ end
 %% 📘 FP Project – Task 4: Evaluate (iterative full reduction)
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-%% ✅ FIX: Evaluación profunda recursiva que siempre devuelve números
+%% ────────────────────────────────────────────────
+%% 📘 FP Project – Task 4: Evaluate (full reduction)
+%% ────────────────────────────────────────────────
+
 fun {Evaluate Prog}
-   local R Pnext in
-      R = {NextReduction Prog}
-      if R.status == ok then
-         %% hay redex → reduce y continúa
-         Pnext = {Reduce Prog}
-         if Pnext.call==Prog.call then
-            %% sin progreso: devuelve el programa tal cual (o lanza error si prefieres)
-            Prog
-         else
-            {Evaluate Pnext}
-         end         
-      elseif R.status == whnf then
-         %% forma normal débil: verificar si hay variables internas que evaluar
-         case Prog.call
-         of var(bindings:Bs body:B) then
-            %% Evaluar variables internas
-            local EvaluatedBody in
-               EvaluatedBody = {EvalVarBindings Bs B}
-               case EvaluatedBody
+   %% ✅ Caso base inmediato: si ya es número, retorna el número
+   case Prog.call
+   of leaf(num:N) then N
+   [] _ then
+      local R Pnext in
+         R = {NextReduction Prog}
+         if R.status == ok then
+            %% hay redex → reduce y continúa
+            Pnext = {Reduce Prog}
+            if Pnext.call == Prog.call then
+               %% sin progreso: devolver el valor si es número
+               case Prog.call
                of leaf(num:N) then N
+               [] _ then Prog.call
+               end
+            else
+               {Evaluate Pnext}
+            end         
+
+         elseif R.status == whnf then
+            %% En WHNF: normaliza la expresión (bindings, apps internas)
+            %% y reintenta con la máquina de reducción.
+            local Normal in
+               case Prog.call
+               of var(bindings:Bs body:B) then
+                  %% Evalúa primero los 'var ... in ...'
+                  Normal = {EvalVarBindings Bs B}
                [] _ then
-                  %% Crear nuevo programa con el cuerpo evaluado y continuar
-                  local NewProg in
-                     NewProg = prog(function:Prog.function args:Prog.args body:Prog.body call:EvaluatedBody)
-                     {Evaluate NewProg}
-                  end
+                  %% Normaliza profundamente (sin intentar calcular primitivas aquí)
+                  Normal = {EvaluateDeep Prog.call Prog}
                end
-            end
-         [] app(function:F arg:A) then
-            %% Evaluar recursivamente función y argumento
-            local EvalF EvalA in
-               EvalF = {EvaluateDeep F Prog}
-               EvalA = {EvaluateDeep A Prog}
-               case EvalF#EvalA
-               of leaf(num:NF)#leaf(num:NA) then
-                  %% Aplicar operación si es primitiva
-                  case F
-                  of leaf(var:Op) then
-                     case Op
-                     of '+' then NF + NA
-                     [] '-' then NF - NA
-                     [] '*' then NF * NA
-                     [] '/' then NF div NA
-                     [] 'rad' then
-                         if NA == 0 then
-                            raise error('zero_root_not_allowed'(base:NF)) end
-                         else
-                            {Float.toInt {Float.pow {Int.toFloat NF} (1.0/{Int.toFloat NA})}}
-                         end                     
-                     else
-                        %% No es primitiva, crear nueva aplicación
-                        local NewProg in
-                           NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
-                                         call:app(function:EvalF arg:EvalA))
-                           {Evaluate NewProg}
-                        end
-                     end
-                  else
-                     %% No es primitiva, crear nueva aplicación
-                     local NewProg in
-                        NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
-                                      call:app(function:EvalF arg:EvalA))
-                        {Evaluate NewProg}
-                     end
-                  end
-               [] _#_ then
-                  %% Al menos uno no es número, crear nueva aplicación
-                  local NewProg in
-                     NewProg = prog(function:Prog.function args:Prog.args body:Prog.body 
-                                   call:app(function:EvalF arg:EvalA))
-                     {Evaluate NewProg}
-                  end
+         
+               if Normal == Prog.call then
+                  %% No hubo progreso real → devolver expresión (stuck en WHNF)
+                  Prog.call
+               else
+                  %% Reintenta evaluación completa con la call normalizada
+                  {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:Normal)}
                end
+            end 
+         else
+            %% stuck o sin redex
+            case Prog.call
+            of leaf(num:N) then N
+            [] var(bindings:Bs body:B) then
+               {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:B)}
+            [] _ then Prog.call
             end
-         [] _ then
-            %% No es var ni app, devolver el grafo
-            Prog
-         end
-      else
-         %% stuck o sin redex: devolver el valor si es número
-         case Prog.call
-         of leaf(num:N) then N
-         [] _ then Prog
          end
       end
    end
 end
 
-%% ✅ FIX: Función auxiliar para evaluación profunda de expresiones
+%% ✅ Evaluación profunda auxiliar
 fun {EvaluateDeep Expr Prog}
    case Expr
    of leaf(num:N) then Expr
    [] leaf(var:_) then Expr
    [] app(function:F arg:A) then
-      local EvalF EvalA in
-         EvalF = {EvaluateDeep F Prog}
-         EvalA = {EvaluateDeep A Prog}
-         app(function:EvalF arg:EvalA)
-      end
+      app(function:{EvaluateDeep F Prog} arg:{EvaluateDeep A Prog})
    [] var(bindings:Bs body:B) then
-      local EvaluatedBody in
-         EvaluatedBody = {EvalVarBindings Bs B}
-         {EvaluateDeep EvaluatedBody Prog}
-      end
+      {EvaluateDeep {EvalVarBindings Bs B} Prog}
    else
       Expr
    end
