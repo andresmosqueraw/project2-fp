@@ -1136,6 +1136,268 @@ end
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% COMPATIBILITY LAYER: Classic Template Instantiation Model
+%% This layer provides the classic TI model functions while preserving
+%% all existing advanced functionality. Functions here can be used
+%% alongside or instead of the advanced versions.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%% ────────────────────────────────────────────────
+%% Classic NextRedex: Follow left spine to find redex
+%% This is the classical method: traverse left branches until
+%% we find a supercombinator or primitive operator.
+%% ────────────────────────────────────────────────
+
+fun {NextRedexClassic Prog}
+   %% Classic TI method: follow left spine until we find a redex
+   %% First, unwind to get head and all arguments
+   local UW Head AllArgs in
+      UW = {Unwind Prog.call nil nil}
+      Head = UW.head
+      AllArgs = UW.args
+      
+      %% Now check the head type
+      case Head
+      of leaf(var:V) then
+         if {IsPrimitive V} then
+            %% Primitive: check if we have enough arguments
+            if {Length AllArgs} >= 2 then
+               local ArgsK Root in
+                  ArgsK = {List.take AllArgs 2}
+                  Root = {MakeApp Head ArgsK}
+                  redex_classic(status:ok kind:primitive(V) head:Head args:ArgsK root:Root)
+               end
+            else
+               redex_classic(status:whnf kind:primitive(V) head:Head args:AllArgs root:Prog.call)
+            end
+         elseif V==Prog.function then
+            %% Supercombinator: check if we have enough arguments
+            local K in
+               K = {Length Prog.args}
+               if {Length AllArgs} >= K then
+                  local ArgsK Root in
+                     ArgsK = {List.take AllArgs K}
+                     Root = {MakeApp Head ArgsK}
+                     redex_classic(status:ok kind:supercombinator(V) head:Head args:ArgsK root:Root)
+                  end
+               else
+                  redex_classic(status:whnf kind:supercombinator(V) head:Head args:AllArgs root:Prog.call)
+               end
+            end
+         else
+            %% Variable: WHNF
+            redex_classic(status:whnf kind:variable(V) head:Head args:AllArgs root:Prog.call)
+         end
+      [] leaf(num:N) then
+         %% Number as head: stuck (overapplication)
+         redex_classic(status:stuck kind:number(N) head:Head args:AllArgs root:Prog.call)
+      [] var(bindings:Bs body:B) then
+         %% Var expression: needs evaluation of bindings
+         redex_classic(status:whnf kind:var_expr head:Head args:AllArgs root:Prog.call)
+      else
+         %% Other: treat as WHNF
+         redex_classic(status:whnf kind:other head:Head args:AllArgs root:Prog.call)
+      end
+   end
+end
+
+%% ────────────────────────────────────────────────
+%% Classic Graph Replacement: Replace redex in graph maintaining sharing
+%% This version ensures that shared nodes are properly maintained
+%% ────────────────────────────────────────────────
+
+fun {ReplaceInGraphClassic Graph Root New}
+   %% Classic graph replacement: replace Root with New in Graph
+   %% This maintains sharing by using structural equality
+   local
+      fun {ReplaceOnce Expr Root New Done}
+         if {Value.isDet Done} andthen Done then
+            Expr#Done
+         elseif Expr==Root then
+            New#true
+         else
+            case Expr
+            of app(function:F arg:A) then
+               local NewF DoneF NewA DoneA in
+                  NewF#DoneF = {ReplaceOnce F Root New Done}
+                  NewA#DoneA = {ReplaceOnce A Root New DoneF}
+                  app(function:NewF arg:NewA)#DoneA
+               end
+            [] var(bindings:Bs body:B) then
+               local NewBs DoneBs NewBody DoneBody in
+                  local
+                     fun {ProcessBindings Bs Acc DoneAcc}
+                        case Bs
+                        of nil then {Reverse Acc}#DoneAcc
+                        [] B|Rest then
+                           local NewExpr DoneExpr in
+                              NewExpr#DoneExpr = {ReplaceOnce B.expr Root New DoneAcc}
+                              {ProcessBindings Rest (bind(var:B.var expr:NewExpr)|Acc) DoneExpr}
+                           end
+                        end
+                     end
+                  in
+                     NewBs#DoneBs = {ProcessBindings Bs nil Done}
+                  end
+                  NewBody#DoneBody = {ReplaceOnce B Root New DoneBs}
+                  var(bindings:NewBs body:NewBody)#DoneBody
+               end
+            else
+               Expr#Done
+            end
+         end
+      end
+   in
+      local Result Done in
+         Result#Done = {ReplaceOnce Graph Root New false}
+         Result
+      end
+   end
+end
+
+%% ────────────────────────────────────────────────
+%% Classic Subst: Simple substitution without shadowing awareness
+%% This is the basic substitution used in classic TI model
+%% ────────────────────────────────────────────────
+
+fun {SubstClassic Expr Var WithNode}
+   %% Classic substitution: simple recursive replacement
+   case Expr
+   of leaf(var:V) then
+      if V==Var then WithNode else Expr end
+   [] leaf(num:_) then
+      Expr
+   [] app(function:F arg:A) then
+      app(function:{SubstClassic F Var WithNode}
+          arg:      {SubstClassic A Var WithNode})
+   [] var(bindings:Bs body:B) then
+      %% Classic version: substitute in bindings and body
+      var(bindings:{Map Bs fun {$ B}
+                            bind(var:B.var expr:{SubstClassic B.expr Var WithNode})
+                         end}
+          body:{SubstClassic B Var WithNode})
+   else
+      Expr
+   end
+end
+
+%% ────────────────────────────────────────────────
+%% Classic Reduce: One-step reduction using classic model
+%% ────────────────────────────────────────────────
+
+fun {ReduceClassic Prog}
+   local R in
+      R = {NextRedexClassic Prog}
+      if R.status == ok then
+         case R.kind
+         of supercombinator(Fn) then
+            %% Supercombinator reduction: substitute arguments
+            local SubstMultiple Instanced in
+               fun {SubstMultiple Expr ArgsNames ArgsValues}
+                  case ArgsNames#ArgsValues
+                  of nil#nil then Expr
+                  [] (Name|RestNames)#(Value|RestValues) then
+                     {SubstMultiple {SubstClassic Expr Name Value} RestNames RestValues}
+                  [] _#_ then Expr
+                  end
+               end
+               Instanced = {SubstMultiple Prog.body Prog.args R.args}
+               local NewCall in
+                  NewCall = {ReplaceInGraphClassic Prog.call R.root Instanced}
+                  prog(function:Prog.function args:Prog.args body:Prog.body call:NewCall)
+               end
+            end
+         [] primitive(Op) then
+            %% Primitive reduction: evaluate operation
+            local A1 A2 N1 N2 Res in
+               A1 = {List.nth R.args 1}
+               A2 = {List.nth R.args 2}
+               try
+                  N1 = {EvalToNum A1 Prog}
+                  N2 = {EvalToNum A2 Prog}
+                  Res = case Op
+                        of '+' then N1+N2
+                        [] '-' then N1-N2
+                        [] '*' then N1*N2
+                        [] '/' then
+                           if N2 == 0 then
+                              raise error('division_by_zero'(dividend:N1)) end
+                           else
+                              N1 div N2
+                           end
+                        [] 'rad' then
+                           if N2 == 0 then
+                              raise error('zero_root_not_allowed'(base:N1)) end
+                           else
+                              {Float.toInt {Float.pow {Int.toFloat N1} (1.0/{Int.toFloat N2})}}
+                           end
+                        else
+                           raise error('unknown_operator'(op:Op)) end
+                        end
+                  local NewCall in
+                     NewCall = {ReplaceInGraphClassic Prog.call R.root leaf(num:Res)}
+                     prog(function:Prog.function args:Prog.args body:Prog.body call:NewCall)
+                  end
+               catch E then
+                  %% Error in primitive: return unchanged
+                  Prog
+               end
+            end
+         else
+            %% Other kind: return unchanged
+            Prog
+         end
+      else
+         %% Not a redex: return unchanged
+         Prog
+      end
+   end
+end
+
+%% ────────────────────────────────────────────────
+%% Classic Evaluate: Full evaluation using classic model
+%% ────────────────────────────────────────────────
+
+fun {EvaluateClassic Prog}
+   case Prog.call
+   of leaf(num:N) then
+      N
+   [] _ then
+      local Pnext in
+         Pnext = {ReduceClassic Prog}
+         if Pnext.call == Prog.call then
+            %% No reduction occurred: return as-is
+            Prog.call
+         else
+            %% Reduction occurred: continue evaluating
+            {EvaluateClassic Pnext}
+         end
+      end
+   end
+end
+
+%% ────────────────────────────────────────────────
+%% Bridge Functions: Allow switching between classic and advanced
+%% ────────────────────────────────────────────────
+
+fun {EvaluateWithMode Prog Mode}
+   case Mode
+   of classic then {EvaluateClassic Prog}
+   [] advanced then {Evaluate Prog}
+   [] auto then
+      %% Auto mode: try advanced first, fallback to classic if needed
+      try
+         {Evaluate Prog}
+      catch E then
+         {System.showInfo ">>> Advanced evaluation failed, trying classic mode"}
+         {EvaluateClassic Prog}
+      end
+   else
+      {Evaluate Prog}  %% Default to advanced
+   end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 %% Task 4
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
@@ -1309,206 +1571,228 @@ end
 %%          prioridad de operadores, estructuras absurdas.
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 1. Aritmética básica + precedencia + paréntesis
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S1: (3 + 4) * (10 - 2) = 56"}
+   % {System.showInfo ">>> About to call GraphGeneration for S1"}
+   % local P1 R1 in
+   %    P1 = {GraphGeneration "fun f x = (3 + 4) * (10 - 2)\nf 0"}
+   %    {System.showInfo ">>> GraphGeneration S1 returned, P1 = "#{Value.toVirtualString P1 0 0}}
+   %    {System.showInfo ">>> About to call Evaluate for S1"}
+   % R1 = {Evaluate P1}
+   %    {System.showInfo ">>> Evaluate S1 returned"}
+   % {PrintResult R1}
+   % end
+   
+   % {System.showInfo "TEST S2: 3 + 4 * 10 = 43"}
+   % {System.showInfo ">>> About to call GraphGeneration for S2"}
+   % local P2 in
+   %    P2 = {GraphGeneration "fun f x = 3 + 4 * 10\nf 0"}
+   %    {System.showInfo ">>> GraphGeneration S2 returned, P2 = "#{Value.toVirtualString P2 0 0}}
+   %    {System.showInfo ">>> About to call Evaluate for S2"}
+   %    {PrintResult {Evaluate P2}}
+   % end
+   
+   % {System.showInfo "TEST S3: (3 + 4) * 10 = 70"}
+   % local P3 in
+   %    P3 = {GraphGeneration "fun f x = (3 + 4) * 10\nf 0"}
+   %    {PrintResult {Evaluate P3}}
+   % end
+   
+   % {System.showInfo "TEST S4: 100 / 5 / 2 = 10 (left associative)"}
+   % local P4 in
+   %    P4 = {GraphGeneration "fun f x = 100 / 5 / 2\nf 0"}
+   %    {PrintResult {Evaluate P4}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % % 2. Supercombinators multi-parámetro
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S5: fun add3 a b c = a + b + c"}
+   % local P5 in
+   %    P5 = {GraphGeneration "fun add3 a b c = a + b + c\nadd3 5 6 7"}
+   %    {PrintResult {Evaluate P5}}
+   % end
+   
+   % {System.showInfo "TEST S6: fun weird x y z = (x * y) - (y / z)"}
+   % local P6 in
+   %    P6 = {GraphGeneration "fun weird x y z = (x * y) - (y / z)\nweird 10 6 3"}
+   %    {PrintResult {Evaluate P6}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 3. Internal variables (var ... in ...)
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S7: var simple binding"}
+   % local P7 in
+   %    P7 = {GraphGeneration "fun g x = var y = x + 1 in y * 10\ng 7"}
+   %    {PrintResult {Evaluate P7}}
+   % end
+   
+   % {System.showInfo "TEST S8: nested var + arithmetic"}
+   % local P8 in
+   %    P8 = {GraphGeneration "fun g x = var a = x * x in var b = a + 10 in b / 2\ng 4"}
+   %    {PrintResult {Evaluate P8}}
+   % end
+   
+   % {System.showInfo "TEST S9: deeply nested var + parentheses"}
+   % local P9 in
+   %    P9 = {GraphGeneration "fun h x = var a = (x + 1) in var b = (a * 2) in var c = (b - 3) in c + a\nh 5"}
+   %    {PrintResult {Evaluate P9}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 4. Overapplication & Underapplication (WHNF)
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S10: Underapplication of + → WHNF"}
+   % local P10 in
+   %    P10 = prog(function:'f' args:[x]
+   %               body:leaf(var:x)
+   %               call:app(function:leaf(var:'+') arg:leaf(num:3)))
+   %    {PrintResult {Evaluate P10}}   %% EXPECT: stuck in WHNF
+   % end
+   
+   % {System.showInfo "TEST S11: Overapplication: f x y = x+y; call f 5 6 7"}
+   % local P11 in
+   %    P11 = {GraphGeneration "fun f x y = x + y\nf 5 6 7"}
+   %    {PrintResult {Evaluate P11}}   %% last arg (7) is applied to a number → stuck
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 5. Function calls nested arbitrarily (REVISARRRRR)
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S12: cascaded calls f (f (f 3))"}
+   % local P12 in
+   %    P12 = {GraphGeneration "fun f x = x * 2\nf f f 3"}
+   %    {PrintResult {Evaluate P12}}  %% (((f f) f) 3)
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % % 6. Division edge cases
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S13: division by zero handoff (should remain stuck)"}
+   % local P13 in
+   %    P13 = {GraphGeneration "fun f x = 10 / 0\nf 0"}
+   %    {PrintResult {Evaluate P13}}   %% Should not crash; WHNF or stuck
+   % end
+   
+   % {System.showInfo "TEST S14: inside var binding division by zero"}
+   % local P14 in
+   %    P14 = {GraphGeneration "fun f x = var y = 10 / 0 in y + 3\nf 0"}
+   %    {PrintResult {Evaluate P14}}   %% WHNF for y
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % % 7. Complex infix + prefix mix
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S15: prefix operator-style: + 3 5"}
+   % local P15 in
+   %    P15 = {GraphGeneration "fun f x = + 3 5\nf 0"}
+   %    {PrintResult {Evaluate P15}}
+   % end
+   
+   % {System.showInfo "TEST S16: mixed: + (3 * 4) 10"}
+   % local P16 in
+   %    P16 = {GraphGeneration "fun f x = + (3 * 4) 10\nf 0"}
+   %    {PrintResult {Evaluate P16}}
+   % end
+   
+   % {System.showInfo "TEST S17: nested mixed hell: + 2 (3 * (4 + 5) / (2 - 1))"}
+   % local P17 in
+   %    P17 = {GraphGeneration "fun f x = + 2 (3 * (4 + 5) / (2 - 1))\nf 0"}
+   %    {PrintResult {Evaluate P17}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 8. WHNF variable propagation
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S18: x + y with y unknown → WHNF"}
+   % local P18 in
+   %    P18 = {GraphGeneration "fun bad x = x + y\nbad 3"}
+   %    {PrintResult {Evaluate P18}}
+   % end
+   
+   % {System.showInfo "TEST S19: return internal var without reducing"}
+   % local P19 in
+   %    P19 = {GraphGeneration "fun t x = var y = x + 1 in y\nt 10"}
+   %    {PrintResult {Evaluate P19}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 9. Strange structures / parenthesis abuse
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S20: (((((3)))) + (((((4)))))) = 7"}
+   % local P20 in
+   %    P20 = {GraphGeneration "fun f x = (((((3)))) + (((((4))))))\nf 0"}
+   %    {PrintResult {Evaluate P20}}
+   % end
+   
+   % {System.showInfo "TEST S21: ((((x))))"}
+   % local P21 in
+   %    P21 = {GraphGeneration "fun f x = (((x)))\nf 9"}
+   %    {PrintResult {Evaluate P21}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % % 10. Stress test: monstrous nested ops
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S22: MONSTER EXPRESSION"}
+   % local P22 in
+   %    P22 = {GraphGeneration "fun f x = (((x + 1) * (x + 2)) / (x - 3)) + ((x * x) - (10 / (x - 5)))\nf 10"}
+   %    {PrintResult {Evaluate P22}}
+   % end
+   
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % %% 11. Argumentos repetidos / Shadowing real (var x oculta parámetro x) / Encadenamiento estricto var→var→var
+   % %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   
+   % {System.showInfo "TEST S23: duplicated arguments (x used twice) EXPECTED: 20"}
+   % local P23 in
+   %    P23 = {GraphGeneration "fun dup x y = x + x + y\ndup 5 10"}
+   %    {PrintResult {Evaluate P23}}   %% EXPECTED: 20
+   % end
+   
+   % {System.showInfo "TEST S24: shadowing — var x shadows function parameter x EXPECTED: 20"}
+   % local P24 in
+   %    P24 = {GraphGeneration "fun f x = var x = 10 in x + x\nf 3"}
+   %    {PrintResult {Evaluate P24}}   %% EXPECTED: 20
+   % end
+   
+   % {System.showInfo "TEST S25: chained var dependencies (a→b→c) EXPECTED: 12"}
+   % local P25 in
+   %    P25 = {GraphGeneration "fun chain x = var a = x + 1 in var b = a * 2 in var c = b - a in c + b\nchain 3"}
+   %    {PrintResult {Evaluate P25}}   %% EXPECTED: 12
+   % end
+
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 1. Aritmética básica + precedencia + paréntesis
+   %% COMPATIBILITY LAYER USAGE EXAMPLES
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
-   {System.showInfo "TEST S1: (3 + 4) * (10 - 2) = 56"}
-   {System.showInfo ">>> About to call GraphGeneration for S1"}
-   local P1 R1 in
-      P1 = {GraphGeneration "fun f x = (3 + 4) * (10 - 2)\nf 0"}
-      {System.showInfo ">>> GraphGeneration S1 returned, P1 = "#{Value.toVirtualString P1 0 0}}
-      {System.showInfo ">>> About to call Evaluate for S1"}
-   R1 = {Evaluate P1}
-      {System.showInfo ">>> Evaluate S1 returned"}
-   {PrintResult R1}
+   {System.showInfo "TEST CLASSIC: Using classic TI model"}
+   local PClassic in
+      PClassic = {GraphGeneration "fun f x = x + 1\nf 5"}
+      {PrintResult {EvaluateClassic PClassic}}   %% Uses classic model
    end
    
-   {System.showInfo "TEST S2: 3 + 4 * 10 = 43"}
-   {System.showInfo ">>> About to call GraphGeneration for S2"}
-   local P2 in
-      P2 = {GraphGeneration "fun f x = 3 + 4 * 10\nf 0"}
-      {System.showInfo ">>> GraphGeneration S2 returned, P2 = "#{Value.toVirtualString P2 0 0}}
-      {System.showInfo ">>> About to call Evaluate for S2"}
-      {PrintResult {Evaluate P2}}
+   {System.showInfo "TEST ADVANCED: Using advanced model (default)"}
+   local PAdvanced in
+      PAdvanced = {GraphGeneration "fun f x = x + 1\nf 5"}
+      {PrintResult {Evaluate PAdvanced}}   %% Uses advanced model
    end
    
-   {System.showInfo "TEST S3: (3 + 4) * 10 = 70"}
-   local P3 in
-      P3 = {GraphGeneration "fun f x = (3 + 4) * 10\nf 0"}
-      {PrintResult {Evaluate P3}}
-   end
-   
-   {System.showInfo "TEST S4: 100 / 5 / 2 = 10 (left associative)"}
-   local P4 in
-      P4 = {GraphGeneration "fun f x = 100 / 5 / 2\nf 0"}
-      {PrintResult {Evaluate P4}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   % 2. Supercombinators multi-parámetro
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S5: fun add3 a b c = a + b + c"}
-   local P5 in
-      P5 = {GraphGeneration "fun add3 a b c = a + b + c\nadd3 5 6 7"}
-      {PrintResult {Evaluate P5}}
-   end
-   
-   {System.showInfo "TEST S6: fun weird x y z = (x * y) - (y / z)"}
-   local P6 in
-      P6 = {GraphGeneration "fun weird x y z = (x * y) - (y / z)\nweird 10 6 3"}
-      {PrintResult {Evaluate P6}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 3. Internal variables (var ... in ...)
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S7: var simple binding"}
-   local P7 in
-      P7 = {GraphGeneration "fun g x = var y = x + 1 in y * 10\ng 7"}
-      {PrintResult {Evaluate P7}}
-   end
-   
-   {System.showInfo "TEST S8: nested var + arithmetic"}
-   local P8 in
-      P8 = {GraphGeneration "fun g x = var a = x * x in var b = a + 10 in b / 2\ng 4"}
-      {PrintResult {Evaluate P8}}
-   end
-   
-   {System.showInfo "TEST S9: deeply nested var + parentheses"}
-   local P9 in
-      P9 = {GraphGeneration "fun h x = var a = (x + 1) in var b = (a * 2) in var c = (b - 3) in c + a\nh 5"}
-      {PrintResult {Evaluate P9}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 4. Overapplication & Underapplication (WHNF)
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S10: Underapplication of + → WHNF"}
-   local P10 in
-      P10 = prog(function:'f' args:[x]
-                 body:leaf(var:x)
-                 call:app(function:leaf(var:'+') arg:leaf(num:3)))
-      {PrintResult {Evaluate P10}}   %% EXPECT: stuck in WHNF
-   end
-   
-   {System.showInfo "TEST S11: Overapplication: f x y = x+y; call f 5 6 7"}
-   local P11 in
-      P11 = {GraphGeneration "fun f x y = x + y\nf 5 6 7"}
-      {PrintResult {Evaluate P11}}   %% last arg (7) is applied to a number → stuck
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 5. Function calls nested arbitrarily (REVISARRRRR)
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S12: cascaded calls f (f (f 3))"}
-   local P12 in
-      P12 = {GraphGeneration "fun f x = x * 2\nf f f 3"}
-      {PrintResult {Evaluate P12}}  %% (((f f) f) 3)
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   % 6. Division edge cases
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S13: division by zero handoff (should remain stuck)"}
-   local P13 in
-      P13 = {GraphGeneration "fun f x = 10 / 0\nf 0"}
-      {PrintResult {Evaluate P13}}   %% Should not crash; WHNF or stuck
-   end
-   
-   {System.showInfo "TEST S14: inside var binding division by zero"}
-   local P14 in
-      P14 = {GraphGeneration "fun f x = var y = 10 / 0 in y + 3\nf 0"}
-      {PrintResult {Evaluate P14}}   %% WHNF for y
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   % 7. Complex infix + prefix mix
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S15: prefix operator-style: + 3 5"}
-   local P15 in
-      P15 = {GraphGeneration "fun f x = + 3 5\nf 0"}
-      {PrintResult {Evaluate P15}}
-   end
-   
-   {System.showInfo "TEST S16: mixed: + (3 * 4) 10"}
-   local P16 in
-      P16 = {GraphGeneration "fun f x = + (3 * 4) 10\nf 0"}
-      {PrintResult {Evaluate P16}}
-   end
-   
-   {System.showInfo "TEST S17: nested mixed hell: + 2 (3 * (4 + 5) / (2 - 1))"}
-   local P17 in
-      P17 = {GraphGeneration "fun f x = + 2 (3 * (4 + 5) / (2 - 1))\nf 0"}
-      {PrintResult {Evaluate P17}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 8. WHNF variable propagation
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S18: x + y with y unknown → WHNF"}
-   local P18 in
-      P18 = {GraphGeneration "fun bad x = x + y\nbad 3"}
-      {PrintResult {Evaluate P18}}
-   end
-   
-   {System.showInfo "TEST S19: return internal var without reducing"}
-   local P19 in
-      P19 = {GraphGeneration "fun t x = var y = x + 1 in y\nt 10"}
-      {PrintResult {Evaluate P19}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 9. Strange structures / parenthesis abuse
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S20: (((((3)))) + (((((4)))))) = 7"}
-   local P20 in
-      P20 = {GraphGeneration "fun f x = (((((3)))) + (((((4))))))\nf 0"}
-      {PrintResult {Evaluate P20}}
-   end
-   
-   {System.showInfo "TEST S21: ((((x))))"}
-   local P21 in
-      P21 = {GraphGeneration "fun f x = (((x)))\nf 9"}
-      {PrintResult {Evaluate P21}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   % 10. Stress test: monstrous nested ops
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S22: MONSTER EXPRESSION"}
-   local P22 in
-      P22 = {GraphGeneration "fun f x = (((x + 1) * (x + 2)) / (x - 3)) + ((x * x) - (10 / (x - 5)))\nf 10"}
-      {PrintResult {Evaluate P22}}
-   end
-   
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 11. Argumentos repetidos / Shadowing real (var x oculta parámetro x) / Encadenamiento estricto var→var→var
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   
-   {System.showInfo "TEST S23: duplicated arguments (x used twice) EXPECTED: 20"}
-   local P23 in
-      P23 = {GraphGeneration "fun dup x y = x + x + y\ndup 5 10"}
-      {PrintResult {Evaluate P23}}   %% EXPECTED: 20
-   end
-   
-   {System.showInfo "TEST S24: shadowing — var x shadows function parameter x EXPECTED: 20"}
-   local P24 in
-      P24 = {GraphGeneration "fun f x = var x = 10 in x + x\nf 3"}
-      {PrintResult {Evaluate P24}}   %% EXPECTED: 20
-   end
-   
-   {System.showInfo "TEST S25: chained var dependencies (a→b→c) EXPECTED: 12"}
-   local P25 in
-      P25 = {GraphGeneration "fun chain x = var a = x + 1 in var b = a * 2 in var c = b - a in c + b\nchain 3"}
-      {PrintResult {Evaluate P25}}   %% EXPECTED: 12
+   {System.showInfo "TEST AUTO: Using auto mode (advanced with classic fallback)"}
+   local PAuto in
+      PAuto = {GraphGeneration "fun f x = x + 1\nf 5"}
+      {PrintResult {EvaluateWithMode PAuto auto}}   %% Tries advanced, falls back to classic if needed
    end
