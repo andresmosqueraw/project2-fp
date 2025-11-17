@@ -26,6 +26,8 @@ fun {Str2Lst S}
          [] C|Cr then
             if C==&( orelse C==&) orelse C==&, then
                & | C | & | {InsDelims Cr}
+            elseif C==&+ orelse C==&- orelse C==&* orelse C==&/ then
+               & | C | & | {InsDelims Cr}
             else
                C | {InsDelims Cr}
             end
@@ -221,7 +223,7 @@ fun {BuildExpr Tokens}
       else
          local Y in
             Y = {List.filter Xs fun {$ T} T \= '(' andthen T \= ')' end}
-            {BuildLeft Y}
+               {BuildLeft Y}
          end
       end   
    end
@@ -260,7 +262,7 @@ fun {GraphGeneration ProgramStr}
 
       FunBody   = {BuildExpr BodyTokens}
       CallGraph = {BuildExpr TokensCall}
-      
+
       prog(function:FName args:ArgsTokens body:FunBody call:CallGraph)
    end
 end
@@ -276,10 +278,10 @@ end
 fun {IsPrimitive Op}
    {List.member Op ['+' '-' '*' '/']}
 end
-
-fun {HeadArity Head Prog}
-   case Head
-   of leaf(var:Op) then
+ 
+ fun {HeadArity Head Prog}
+    case Head
+    of leaf(var:Op) then
       if {IsPrimitive Op} then
          2
       elseif Op==Prog.function then
@@ -291,12 +293,12 @@ fun {HeadArity Head Prog}
       0
    else
       0
-   end
-end
-
-fun {HeadKind Head Prog}
-   case Head
-   of leaf(var:Op) then
+    end
+ end
+ 
+ fun {HeadKind Head Prog}
+    case Head
+    of leaf(var:Op) then
       if {IsPrimitive Op} then
          primitive(Op)
       elseif Op==Prog.function then
@@ -308,17 +310,17 @@ fun {HeadKind Head Prog}
       number(N)
    else
       other
-   end
-end
-
-fun {Unwind Expr Args Apps}
-   case Expr
-   of app(function:F arg:A) then
-      {Unwind F A|Args Expr|Apps}
-   else
-      unwind(head:Expr args:Args apps:Apps)
-   end
-end
+    end
+ end
+ 
+ fun {Unwind Expr Args Apps}
+    case Expr
+    of app(function:F arg:A) then
+       {Unwind F A|Args Expr|Apps}
+    else
+       unwind(head:Expr args:Args apps:Apps)
+    end
+ end
 
 fun {MakeApp F Args}
    case Args
@@ -326,7 +328,7 @@ fun {MakeApp F Args}
    [] A|Ar then {MakeApp app(function:F arg:A) Ar}
    end
 end
-
+ 
 fun {NextRedex Prog}
    local UW Head K Apps AllArgs ArgsK Remaining Kind Root in
       UW      = {Unwind Prog.call nil nil}
@@ -350,7 +352,7 @@ fun {NextRedex Prog}
       end
    end
 end
-
+ 
 %% ────────────────────────────────────────────────
 %% Task 3: Reduce
 %% Check how many arguments the supercombinator or primitive takes and 
@@ -425,7 +427,7 @@ fun {EvalVarBindings Bindings Body Prog}
                          end
             NewRest = {Map Rest fun {$ B} 
                   bind(var:B.var expr:{Subst B.expr V FinalValue})
-               end}
+            end}
             NewBody = {Subst Body V FinalValue}
             {EvalVarBindings NewRest NewBody Prog}
          end
@@ -440,9 +442,9 @@ fun {ReplaceSub Expr Root New}
             Expr#Done
          elseif Expr==Root then
             New#true
-         else
-            case Expr
-            of app(function:F arg:A) then
+   else
+      case Expr
+      of app(function:F arg:A) then
                local NewF DoneF NewA DoneA Result in
                   NewF#DoneF = {ReplaceSubOnce F Root New Done}
                   NewA#DoneA = {ReplaceSubOnce A Root New DoneF}
@@ -509,7 +511,7 @@ fun {Reduce Prog}
                   [] _#_ then Expr
                   end
                end
-               Instanced = {SubstMultiple Prog.body Prog.args R.args}
+                  Instanced = {SubstMultiple Prog.body Prog.args R.args}
                local TempProgInst EvalResultInst in
                   TempProgInst = prog(function:Prog.function args:Prog.args body:Prog.body call:Instanced)
                   EvalResultInst = {Evaluate TempProgInst}
@@ -539,8 +541,8 @@ fun {Reduce Prog}
                                       [] app(function:_ arg:_) then
                                          {EvaluateDeep EvalResult1 TempProg1}
                                       [] _ then EvalResult1
-                                      end
-                                   end
+                           end
+                        end
                                 [] _ then A1
                                 end
                   EvaluatedA2 = case A2
@@ -572,7 +574,7 @@ fun {Reduce Prog}
                            end
                         else
                            raise error('unknown_operator'(op:Op)) end
-                        end
+                  end
                   NewNode = {ApplyRest leaf(num:Res) R.rest}
                catch E then
                   NewNode = R.root
@@ -662,12 +664,12 @@ fun {Evaluate Prog}
                ProgCall = Prog.call
                if {Value.isDet PnextCall} andthen {Value.isDet ProgCall} andthen PnextCall == ProgCall then
                   case ProgCall
-                  of leaf(num:N) then N
+               of leaf(num:N) then N
                   [] _ then ProgCall
-                  end
-               else
-                  {Evaluate Pnext}
                end
+            else
+               {Evaluate Pnext}
+            end         
             end         
          elseif R.status == whnf then
             local Normal in
@@ -699,13 +701,13 @@ fun {Evaluate Prog}
                   [] app(function:_ arg:_) then
                      {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:EvalResult)}
                   [] _ then EvalResult
-                  end
-               end
-            [] _ then
-               Prog.call
             end
          end
+            [] _ then
+               Prog.call
       end
+   end
+end
    end
 end
 
@@ -719,77 +721,77 @@ local P1 R1 in
    R1 = {Evaluate P1}
    {System.showInfo "Result: "#R1#" (Expected: (1+2+3)*4 = 24)"}
 end
-
+   
 {System.showInfo "\n=== TEST S2: 3 + 4 * 10 = 43 ==="}
 local P2 R2 in
    P2 = {GraphGeneration "fun f x = 3 + 4 * 10\nf 0"}
    R2 = {Evaluate P2}
-   {System.showInfo "Result: "#R2}
+   {System.showInfo "Result: "#R2#" (Expected: 43)"}
 end
-
+   
 {System.showInfo "\n=== TEST S3: (3 + 4) * 10 = 70 ==="}
 local P3 R3 in
    P3 = {GraphGeneration "fun f x = (3 + 4) * 10\nf 0"}
    R3 = {Evaluate P3}
-   {System.showInfo "Result: "#R3}
+   {System.showInfo "Result: "#R3#" (Expected: 70)"}
 end
-
+   
 {System.showInfo "\n=== TEST S4: 100 / 5 / 2 = 10 (left associative) ==="}
 local P4 R4 in
    P4 = {GraphGeneration "fun f x = 100 / 5 / 2\nf 0"}
    R4 = {Evaluate P4}
-   {System.showInfo "Result: "#R4}
+   {System.showInfo "Result: "#R4#" (Expected: 10)"}
 end
-
+   
 {System.showInfo "\n=== TEST S5: fun add3 a b c = a + b + c ==="}
 local P5 R5 in
    P5 = {GraphGeneration "fun add3 a b c = a + b + c\nadd3 5 6 7"}
    R5 = {Evaluate P5}
-   {System.showInfo "Result: "#R5}
+   {System.showInfo "Result: "#R5#" (Expected: 18)"}
 end
 
 {System.showInfo "\n=== TEST S6: fun weird x y z = (x * y) - (y / z) ==="}
 local P6 R6 in
    P6 = {GraphGeneration "fun weird x y z = (x * y) - (y / z)\nweird 10 6 3"}
    R6 = {Evaluate P6}
-   {System.showInfo "Result: "#R6}
+   {System.showInfo "Result: "#R6#" (Expected: (10*6) - (6/3) = 60 - 2 = 58)"}
 end
 
 {System.showInfo "\n=== TEST S7: var simple binding ==="}
 local P7 R7 in
    P7 = {GraphGeneration "fun g x = var y = x + 1 in y * 10\ng 7"}
    R7 = {Evaluate P7}
-   {System.showInfo "Result: "#R7}
+   {System.showInfo "Result: "#R7#" (Expected: (7+1)*10 = 80)"}
 end
 
 {System.showInfo "\n=== TEST S8: nested var + arithmetic ==="}
 local P8 R8 in
    P8 = {GraphGeneration "fun g x = var a = x * x in var b = a + 10 in b / 2\ng 4"}
    R8 = {Evaluate P8}
-   {System.showInfo "Result: "#R8}
+   {System.showInfo "Result: "#R8#" (Expected: ((4*4)+10)/2 = (16+10)/2 = 13)"}
 end
 
 {System.showInfo "\n=== TEST S9: deeply nested var + parentheses ==="}
 local P9 R9 in
    P9 = {GraphGeneration "fun h x = var a = (x + 1) in var b = (a * 2) in var c = (b - 3) in c + a\nh 5"}
    R9 = {Evaluate P9}
-   {System.showInfo "Result: "#R9}
+   {System.showInfo "Result: "#R9#" (Expected: a=6, b=12, c=9 → 9+6=15)"}
 end
 
 {System.showInfo "\n=== TEST S10: Underapplication of + → WHNF ==="}
 local P10 R10 in
    P10 = prog(function:'f' args:[x]
-              body:leaf(var:x)
-              call:app(function:leaf(var:'+') arg:leaf(num:3)))
+               body:leaf(var:x)
+               call:app(function:leaf(var:'+') arg:leaf(num:3)))
    R10 = {Evaluate P10}
-   {System.showInfo "Result: "#{Value.toVirtualString R10 0 0}#" (WHNF/stuck)"}
+   {System.showInfo "Result: "#{Value.toVirtualString R10 0 0}#" (Expected: WHNF/stuck)"}
 end
 
 {System.showInfo "\n=== TEST S11: Overapplication: f x y = x+y; call f 5 6 7 ==="}
 local P11 R11 in
    P11 = {GraphGeneration "fun f x y = x + y\nf 5 6 7"}
    R11 = {Evaluate P11}
-   {System.showInfo "Result: "#{Value.toVirtualString R11 0 0}#" (overapplication - stuck)"}
+   {System.showInfo "Result: "#{Value.toVirtualString R11 0 0}#" (Expected: stuck - overapplication)"}
 end
 
 {System.showInfo "\n=== TEST S14: inside var binding division by zero ==="}
@@ -797,70 +799,145 @@ local P14 R14 in
    P14 = {GraphGeneration "fun f x = var y = 10 / 0 in y + 3\nf 0"}
    try
       R14 = {Evaluate P14}
-      {System.showInfo "Result: "#{Value.toVirtualString R14 0 0}#" (WHNF/stuck)"}
+      {System.showInfo "Result: "#{Value.toVirtualString R14 0 0}#" (Expected: Error division-by-zero)"}
    catch E then
-      {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}}
+      {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}#" (Expected: Error)"}
    end
+end
+
+{System.showInfo "\n=== TEST S15: fun fourtimes x = var y = x*x in y+y ==="}
+local P15 R15 in
+   P15 = {GraphGeneration "fun fourtimes x = var y = x*x in y+y\nfourtimes 2"}
+   R15 = {Evaluate P15}
+   {System.showInfo "Result: "#R15#" (Expected: 8)"}
 end
 
 {System.showInfo "\n=== TEST S19: return internal var without reducing ==="}
 local P19 R19 in
    P19 = {GraphGeneration "fun t x = var y = x + 1 in y\nt 10"}
    R19 = {Evaluate P19}
-   {System.showInfo "Result: "#R19}
+   {System.showInfo "Result: "#R19#" (Expected: 11)"}
 end
 
 {System.showInfo "\n=== TEST S20: (((((3)))) + (((((4)))))) = 7 ==="}
 local P20 R20 in
    P20 = {GraphGeneration "fun f x = (((((3)))) + (((((4))))))\nf 0"}
    R20 = {Evaluate P20}
-   {System.showInfo "Result: "#R20}
+   {System.showInfo "Result: "#R20#" (Expected: 7)"}
 end
 
 {System.showInfo "\n=== TEST S21: ((((x)))) ==="}
 local P21 R21 in
    P21 = {GraphGeneration "fun f x = (((x)))\nf 9"}
    R21 = {Evaluate P21}
-   {System.showInfo "Result: "#R21}
+   {System.showInfo "Result: "#R21#" (Expected: 9)"}
+end
+
+{System.showInfo "\n=== TEST S22: fun square x = x * x * x ==="}
+local P22 R22 in
+   P22 = {GraphGeneration "fun square x = x * x * x\nsquare 3"}
+   R22 = {Evaluate P22}
+   {System.showInfo "Result: "#R22#" (Expected: 27)"}
 end
 
 {System.showInfo "\n=== TEST S23: duplicated arguments (x used twice) EXPECTED: 20 ==="}
 local P23 R23 in
    P23 = {GraphGeneration "fun dup x y = x + x + y\ndup 5 10"}
    R23 = {Evaluate P23}
-   {System.showInfo "Result: "#R23}
+   {System.showInfo "Result: "#R23#" (Expected: 20)"}
 end
 
 {System.showInfo "\n=== TEST S24: shadowing — var x shadows function parameter x EXPECTED: 20 ==="}
 local P24 R24 in
    P24 = {GraphGeneration "fun f x = var x = 10 in x + x\nf 3"}
    R24 = {Evaluate P24}
-   {System.showInfo "Result: "#R24}
+   {System.showInfo "Result: "#R24#" (Expected: 20)"}
 end
 
 {System.showInfo "\n=== TEST S25: chained var dependencies (a→b→c) EXPECTED: 12 ==="}
 local P25 R25 in
    P25 = {GraphGeneration "fun chain x = var a = x + 1 in var b = a * 2 in var c = b - a in c + b\nchain 3"}
    R25 = {Evaluate P25}
-   {System.showInfo "Result: "#R25}
+   {System.showInfo "Result: "#R25#" (Expected: 12)"}
+end
+
+{System.showInfo "\n=== TEST F1: square (square 3) = 81 ==="}
+local P26 R26 in
+   P26 = {GraphGeneration "fun square x = x * x * x\nsquare square 3"}
+   R26 = {Evaluate P26}
+   {System.showInfo "Result: "#R26#" (Expected: 81)"}
+end
+
+{System.showInfo "\n=== TEST F2: nested sum_n calls ==="}
+local P27 R27 in
+   P27 = {GraphGeneration "fun sum_n x y z n = (x + y + z) * n\nsum_n 1 sum_n 1 1 1 2 3 2"}
+   R27 = {Evaluate P27}
+   {System.showInfo "Result: "#R27#" (Expected: 1 + (1+1+1)*2 → 1 + 6 = 7, then (1+7+2)*3 = 30)"}
+end
+
+{System.showInfo "\n=== TEST F3: nested arithmetic calls ==="}
+local P28 R28 in
+   P28 = {GraphGeneration "fun arithmetic x y = ((x + y) / (x - y)) * 2\narithmetic arithmetic 5 6 arithmetic 2 11"}
+   R28 = {Evaluate P28}
+   {System.showInfo "Result: "#R28#" (Expected: según definiciones)"}
+end
+
+{System.showInfo "\n=== TEST F4: var_use var_use 16 ==="}
+local P29 R29 in
+   P29 = {GraphGeneration "fun var_use x = var y = x + 1 in var z = y * 2 in z - 3\nvar_use var_use 16"}
+   R29 = {Evaluate P29}
+   {System.showInfo "Result: "#R29#" (Expected: var_use( var_use(16) ))"}
+end
+
+{System.showInfo "\n=== TEST F5: fully parenthesized nested calls ==="}
+local P30 R30 in
+   P30 = {GraphGeneration "fun square x = x * x\n(square (square (square 2)))"}
+   R30 = {Evaluate P30}
+   {System.showInfo "Result: "#R30#" (Expected: square(square(square(2))) = square(square(4)) = square(16) = 256)"}
+end
+
+{System.showInfo "\n=== TEST F6: deep nested self-calls ==="}
+local P31 R31 in
+   P31 = {GraphGeneration "fun inc x = x + 1\ninc inc inc inc 5"}
+   R31 = {Evaluate P31}
+   {System.showInfo "Result: "#R31#" (Expected: 9)"}
+end
+
+{System.showInfo "\n=== TEST F7: mixed nested calls ==="}
+local P32 R32 in
+   P32 = {GraphGeneration "fun f x = x * 2\nf f 3 f 4"}
+   R32 = {Evaluate P32}
+   {System.showInfo "Result: "#R32#" (Expected: 24)"}
+end
+
+{System.showInfo "\n=== TEST F8: simulated composition f(g(h x)) ==="}
+local P33 R33 in
+   P33 = {GraphGeneration "fun comp x = ( (x+1) * 2 ) * 3\ncomp 5"}
+   R33 = {Evaluate P33}
+   {System.showInfo "Result: "#R33#" (Expected: (6 * 2)*3 = 36)"}
+end
+
+{System.showInfo "\n=== TEST F9: nested call inside var binding ==="}
+local P34 R34 in
+   P34 = {GraphGeneration "fun f x = var y = x * x in (y + y) + f 1"}
+   try
+      R34 = {Evaluate P34}
+      {System.showInfo "Result: "#R34#" (Expected: infinite recursion or stuck)"}
+   catch E then
+      {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}}
+   end
+end
+
+{System.showInfo "\n=== TEST F10: nested calls + shadowing ==="}
+local P35 R35 in
+   P35 = {GraphGeneration "fun sh x = var x = x + 1 in sh x"}
+   try
+      R35 = {Evaluate P35}
+      {System.showInfo "Result: "#R35#" (Expected: infinite loop or stuck)"}
+   catch E then
+      {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}}
+   end
 end
 
 {System.showInfo "\n=== All tests completed ==="}
-
-%% ────────────────────────────────────────────────
-%% Example Usage
-%% ────────────────────────────────────────────────
-
-%% Example 1:
-%% fun square x = x * x * x
-%% square 3
-%% Expected result: 27
-
-%% Example 2:
-%% fun fourtimes x = var y = x*x in y+y
-%% fourtimes 2
-%% Expected result: 8
-
-%% Usage:
-%% {Evaluate {GraphGeneration "fun square x = x * x * x\nsquare 3"}}
 
