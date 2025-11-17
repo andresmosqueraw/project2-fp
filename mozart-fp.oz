@@ -713,6 +713,13 @@ end
 %% Test Cases
 %% ────────────────────────────────────────────────
 
+{System.showInfo "\n=== TEST S1: fun sum_n x y z n = (x + y + z) * n ==="}
+local P1 R1 in
+   P1 = {GraphGeneration "fun sum_n x y z n = (x + y + z) * n\nsum_n 1 2 3 4"}
+   R1 = {Evaluate P1}
+   {System.showInfo "Result: "#R1#" (Expected: (1+2+3)*4 = 24)"}
+end
+
 {System.showInfo "\n=== TEST S2: 3 + 4 * 10 = 43 ==="}
 local P2 R2 in
    P2 = {GraphGeneration "fun f x = 3 + 4 * 10\nf 0"}
