@@ -372,8 +372,8 @@ end
     {System.showInfo "=== DEBUG HeadArity ==="}
     {System.showInfo "Head: "#{Value.toVirtualString Head 0 0}#", Prog.function: "#{Value.toVirtualString Prog.function 0 0}#""}
     local Result in
-       case Head
-       of leaf(var:Op) then
+    case Head
+    of leaf(var:Op) then
           if {IsPrimitive Op} then
              {System.showInfo ">>> Head is primitive, returning arity 2"}
              Result = 2
@@ -384,8 +384,9 @@ end
              {System.showInfo ">>> Head is variable, returning arity 0"}
              Result = 0
           end
-       [] leaf(num:_) then
-          {System.showInfo ">>> Head is number, returning arity 0"}
+       [] leaf(num:N) then
+          {System.showInfo ">>> Head is number: "#N#", returning arity 0"}
+          {System.showInfo ">>> WARNING: Number has arity 0 - this means a number is being applied (overapplication)"}
           Result = 0
        else
           {System.showInfo ">>> Head is other type, returning arity 0"}
@@ -400,8 +401,8 @@ end
     {System.showInfo "=== DEBUG HeadKind ==="}
     {System.showInfo "Head: "#{Value.toVirtualString Head 0 0}#", Prog.function: "#{Value.toVirtualString Prog.function 0 0}#""}
     local Result in
-       case Head
-       of leaf(var:Op) then
+    case Head
+    of leaf(var:Op) then
           if {IsPrimitive Op} then
              {System.showInfo ">>> Head is primitive: "#{Value.toVirtualString Op 0 0}}
              Result = primitive(Op)
@@ -414,9 +415,10 @@ end
           end
        [] leaf(num:N) then
           {System.showInfo ">>> Head is number: "#N}
+          {System.showInfo ">>> WARNING: Number as head means number is being applied (overapplication detected)"}
           Result = number(N)
        else
-          {System.showInfo ">>> Head is other type"}
+          {System.showInfo ">>> Head is other type: "#{Value.toVirtualString Head 0 0}}
           Result = other
        end
        {System.showInfo ">>> HeadKind result: "#{Value.toVirtualString Result 0 0}}
@@ -474,6 +476,8 @@ end
          Remaining = {List.drop AllArgs K}
          Root      = {MakeApp Head ArgsK}
          {System.showInfo ">>> ArgsK: "#{Value.toVirtualString ArgsK 0 0}#", Remaining length: "#{Length Remaining}}
+         {System.showInfo ">>> Remaining args: "#{Value.toVirtualString Remaining 0 0}}
+         {System.showInfo ">>> Root (redex to replace): "#{Value.toVirtualString Root 0 0}}
          redex(status:ok kind:Kind head:Head arity:K
                args:ArgsK rest:Remaining
                root:Root apps:Apps allargs:AllArgs)
@@ -495,19 +499,42 @@ fun {Subst Expr Var WithNode}
       app(function:{Subst F Var WithNode}
           arg:      {Subst A Var WithNode})
    [] var(bindings:Bs body:B) then
-      var(bindings:{Map Bs fun {$ B}
-                        bind(var:B.var expr:{Subst B.expr Var WithNode})
-                     end}
-          body:{Subst B Var WithNode})
+      local Shadowed in
+         Shadowed = {List.some Bs fun {$ B} B.var == Var end}
+         if Shadowed then
+            %% Variable local hace shadow del parámetro: no sustituir en body
+            var(bindings:{Map Bs fun {$ B}
+                              bind(var:B.var expr:{Subst B.expr Var WithNode})
+                           end}
+                body:B)
+         else
+            %% No hay shadowing: sustituir normalmente
+            var(bindings:{Map Bs fun {$ B}
+                              bind(var:B.var expr:{Subst B.expr Var WithNode})
+                           end}
+                body:{Subst B Var WithNode})
+         end
+      end
    else
       Expr
    end
 end
 
 fun {ApplyRest Node Rest}
+   {System.showInfo "=== DEBUG ApplyRest ==="}
+   {System.showInfo "Node: "#{Value.toVirtualString Node 0 0}}
+   {System.showInfo "Rest: "#{Value.toVirtualString Rest 0 0}}
    case Rest
-   of nil        then Node
-   [] R|Rs then {ApplyRest app(function:Node arg:R) Rs}
+   of nil then
+      {System.showInfo ">>> ApplyRest: Rest is nil, returning Node"}
+      Node
+   [] R|Rs then
+      {System.showInfo ">>> ApplyRest: Applying arg "#{Value.toVirtualString R 0 0}#" to Node, remaining: "#{Value.toVirtualString Rs 0 0}}
+      local Result in
+         Result = {ApplyRest app(function:Node arg:R) Rs}
+         {System.showInfo ">>> ApplyRest: Result after applying: "#{Value.toVirtualString Result 0 0}}
+         Result
+      end
    end
 end
 
@@ -589,8 +616,8 @@ fun {EvalVarBindings Bindings Body Prog}
          case EvaluatedExpr
          of leaf(num:N) then
             {System.showInfo ">>> EvaluatedExpr is leaf(num): "#N#", substituting in body"}
-            local NewRest NewBody in
-               NewRest = {Map Rest fun {$ B} 
+         local NewRest NewBody in
+            NewRest = {Map Rest fun {$ B} 
                   bind(var:B.var expr:{Subst B.expr V leaf(num:N)})
                end}
                NewBody = {Subst Body V leaf(num:N)}
@@ -696,15 +723,42 @@ fun {EvalVarBindings Bindings Body Prog}
 end
 
 fun {ReplaceSub Expr Root New}
-   if Expr==Root then
-      New
+   {System.showInfo "=== DEBUG ReplaceSub ==="}
+   {System.showInfo "Expr: "#{Value.toVirtualString Expr 0 0}}
+   {System.showInfo "Root: "#{Value.toVirtualString Root 0 0}}
+   {System.showInfo "New: "#{Value.toVirtualString New 0 0}}
+   local
+      fun {ReplaceSubOnce Expr Root New Done}
+         if {Value.isDet Done} andthen Done then
+            {System.showInfo ">>> ReplaceSubOnce: Already replaced, returning Expr unchanged"}
+            Expr#Done
+         elseif Expr==Root then
+            {System.showInfo ">>> ReplaceSubOnce: Expr == Root, returning New"}
+            New#true
    else
       case Expr
       of app(function:F arg:A) then
-         app(function:{ReplaceSub F Root New}
-             arg:      {ReplaceSub A Root New})
-      else
-         Expr
+               {System.showInfo ">>> ReplaceSubOnce: Expr is app, recursing on F and A"}
+               local NewF DoneF NewA DoneA Result in
+                  NewF#DoneF = {ReplaceSubOnce F Root New Done}
+                  {System.showInfo ">>> ReplaceSubOnce: NewF: "#{Value.toVirtualString NewF 0 0}#", DoneF: "#{Value.toVirtualString DoneF 0 0}}
+                  NewA#DoneA = {ReplaceSubOnce A Root New DoneF}
+                  {System.showInfo ">>> ReplaceSubOnce: NewA: "#{Value.toVirtualString NewA 0 0}#", DoneA: "#{Value.toVirtualString DoneA 0 0}}
+                  Result = app(function:NewF arg:NewA)
+                  {System.showInfo ">>> ReplaceSubOnce: Result: "#{Value.toVirtualString Result 0 0}}
+                  Result#DoneA
+               end
+            else
+               {System.showInfo ">>> ReplaceSubOnce: Expr is not app and not Root, returning Expr unchanged"}
+               Expr#Done
+            end
+         end
+      end
+   in
+      local Result Done in
+         Result#Done = {ReplaceSubOnce Expr Root New false}
+         {System.showInfo ">>> ReplaceSub: Final result: "#{Value.toVirtualString Result 0 0}}
+         Result
       end
    end
 end
@@ -717,7 +771,8 @@ fun {EvalToNum Expr Prog}
       {System.showInfo ">>> EvalToNum: Expr is leaf(num), returning: "#N}
       N
    [] leaf(var:V) then
-      {System.showInfo ">>> EvalToNum: Expr is variable, raising error"}
+      {System.showInfo ">>> EvalToNum: Expr is variable: "#{Value.toVirtualString V 0 0}#", raising error"}
+      {System.showInfo ">>> EvalToNum: Cannot convert variable to number - variable is not bound to a number"}
       raise error('expected_number'(expr:Expr status:whnf)) end
    [] var(bindings:Bs body:B) then
       {System.showInfo ">>> EvalToNum: Expr is var, calling EvalVarBindings"}
@@ -780,22 +835,215 @@ fun {Reduce Prog}
                   [] _#_ then Expr
                   end
                end
-               local Instanced in
+               local Instanced EvaluatedInstanced in
                   Instanced = {SubstMultiple Prog.body Prog.args R.args}
                   {System.showInfo ">>> Instanced body: "#{Value.toVirtualString Instanced 0 0}}
-                  NewNode = {ApplyRest Instanced R.rest}
+                  {System.showInfo ">>> Evaluating Instanced before applying rest args"}
+                  local TempProgInst EvalResultInst in
+                     TempProgInst = prog(function:Prog.function args:Prog.args body:Prog.body call:Instanced)
+                     EvalResultInst = {Evaluate TempProgInst}
+                     {System.showInfo ">>> Instanced Evaluate result: "#{Value.toVirtualString EvalResultInst 0 0}}
+                     EvaluatedInstanced = case EvalResultInst
+                                          of leaf(num:N) then leaf(num:N)
+                                          [] N andthen {IsInt N} then leaf(num:N)
+                                          [] app(function:_ arg:_) then
+                                             {EvaluateDeep EvalResultInst TempProgInst}
+                                          [] _ then EvalResultInst
+                                          end
+                     {System.showInfo ">>> EvaluatedInstanced: "#{Value.toVirtualString EvaluatedInstanced 0 0}}
+                  end
+                  {System.showInfo ">>> R.rest (remaining args): "#{Value.toVirtualString R.rest 0 0}}
+                  {System.showInfo ">>> R.rest length: "#{Length R.rest}}
+                  NewNode = {ApplyRest EvaluatedInstanced R.rest}
                   {System.showInfo ">>> NewNode after ApplyRest: "#{Value.toVirtualString NewNode 0 0}}
                end
             end            
          [] primitive(Op) then
             {System.showInfo ">>> Reducing primitive: "#{Value.toVirtualString Op 0 0}}
-            local A1 A2 N1 N2 Res in
+            local A1 A2 N1 N2 Res EvaluatedA1 EvaluatedA2 in
                A1 = {List.nth R.args 1}
                A2 = {List.nth R.args 2}
                {System.showInfo ">>> Primitive args: A1="#{Value.toVirtualString A1 0 0}#", A2="#{Value.toVirtualString A2 0 0}}
                try
-                  N1 = {EvalToNum A1 Prog}
-                  N2 = {EvalToNum A2 Prog}
+                  {System.showInfo ">>> Evaluating A1 before EvalToNum"}
+                  EvaluatedA1 = case A1
+                                of app(function:_ arg:_) then
+                                   {System.showInfo ">>> A1 is app: "#{Value.toVirtualString A1 0 0}#", calling EvaluateDeep"}
+                                   {System.showInfo ">>> Creating TempProg1 with call=A1"}
+                                   local TempProg1 EvalResult1 in
+                                      TempProg1 = prog(function:Prog.function args:Prog.args body:Prog.body call:A1)
+                                      {System.showInfo ">>> TempProg1 created, calling Evaluate..."}
+                                      EvalResult1 = {Evaluate TempProg1}
+                                      {System.showInfo ">>> A1 Evaluate result: "#{Value.toVirtualString EvalResult1 0 0}}
+                                      {System.showInfo ">>> A1 Evaluate result type: "#{Value.toVirtualString {Value.type EvalResult1} 0 0}}
+                                      case EvalResult1
+                                      of leaf(num:N) then
+                                         {System.showInfo ">>> A1 Evaluate returned number: "#N}
+                                         leaf(num:N)
+                                      [] N andthen {IsInt N} then
+                                         {System.showInfo ">>> A1 Evaluate returned integer: "#N}
+                                         leaf(num:N)
+                                      [] app(function:_ arg:_) then
+                                         {System.showInfo ">>> A1 Evaluate returned app, calling EvaluateDeep on it"}
+                                         {EvaluateDeep EvalResult1 TempProg1}
+                                      [] _ then
+                                         {System.showInfo ">>> A1 Evaluate returned other type: "#{Value.toVirtualString EvalResult1 0 0}}
+                                         EvalResult1
+                                      end
+                                   end
+                                [] leaf(var:V) andthen V==Prog.function then
+                                   {System.showInfo ">>> A1 is function variable: "#{Value.toVirtualString V 0 0}#", trying to evaluate as application"}
+                                   {System.showInfo ">>> Creating TempProg1 with call=A1: "#{Value.toVirtualString A1 0 0}}
+                                   local TempProg1 EvalResult1 in
+                                      TempProg1 = prog(function:Prog.function args:Prog.args body:Prog.body call:A1)
+                                      {System.showInfo ">>> TempProg1 created: function="#{Value.toVirtualString TempProg1.function 0 0}#", call="#{Value.toVirtualString TempProg1.call 0 0}}
+                                      {System.showInfo ">>> Calling Evaluate on TempProg1..."}
+                                      EvalResult1 = {Evaluate TempProg1}
+                                      {System.showInfo ">>> A1 Evaluate result: "#{Value.toVirtualString EvalResult1 0 0}}
+                                      {System.showInfo ">>> Checking type of EvalResult1..."}
+                                      case EvalResult1
+                                      of leaf(num:N) then
+                                         {System.showInfo ">>> EvalResult1 is leaf(num): "#N#", returning leaf(num)"}
+                                         leaf(num:N)
+                                      [] N andthen {IsInt N} then
+                                         {System.showInfo ">>> EvalResult1 is integer: "#N#", returning leaf(num)"}
+                                         leaf(num:N)
+                                      [] app(function:_ arg:_) then
+                                         {System.showInfo ">>> EvalResult1 is app, calling EvaluateDeep on it"}
+                                         local DeepResult in
+                                            DeepResult = {EvaluateDeep EvalResult1 TempProg1}
+                                            {System.showInfo ">>> EvaluateDeep returned: "#{Value.toVirtualString DeepResult 0 0}}
+                                            DeepResult
+                                         end
+                                      [] leaf(var:VarName) then
+                                         {System.showInfo ">>> EvalResult1 is leaf(var) in WHNF: "#{Value.toVirtualString VarName 0 0}#", trying EvaluateDeep to see if it can be reduced further"}
+                                         local DeepResult in
+                                            DeepResult = {EvaluateDeep EvalResult1 TempProg1}
+                                            {System.showInfo ">>> EvaluateDeep on WHNF variable returned: "#{Value.toVirtualString DeepResult 0 0}}
+                                            case DeepResult
+                                            of leaf(num:N) then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to number: "#N}
+                                               leaf(num:N)
+                                            [] N andthen {IsInt N} then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to integer: "#N}
+                                               leaf(num:N)
+                                            [] app(function:_ arg:_) then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to app, trying to evaluate further"}
+                                               local FurtherEval in
+                                                  FurtherEval = {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:DeepResult)}
+                                                  {System.showInfo ">>> Further evaluation returned: "#{Value.toVirtualString FurtherEval 0 0}}
+                                                  case FurtherEval
+                                                  of leaf(num:N) then leaf(num:N)
+                                                  [] N andthen {IsInt N} then leaf(num:N)
+                                                  [] _ then DeepResult
+                                                  end
+                                               end
+                                            [] _ then
+                                               {System.showInfo ">>> EvaluateDeep could not convert WHNF variable, returning as-is"}
+                                               DeepResult
+                                            end
+                                         end
+                                      [] _ then
+                                         {System.showInfo ">>> EvalResult1 is other type: "#{Value.toVirtualString EvalResult1 0 0}#", returning as-is"}
+                                         EvalResult1
+                                      end
+                                   end
+                                [] _ then A1
+                                end
+                  {System.showInfo ">>> EvaluatedA1 final result: "#{Value.toVirtualString EvaluatedA1 0 0}}
+                  {System.showInfo ">>> About to call EvalToNum on EvaluatedA1: "#{Value.toVirtualString EvaluatedA1 0 0}}
+                  {System.showInfo ">>> Evaluating A2 before EvalToNum"}
+                  EvaluatedA2 = case A2
+                                of app(function:_ arg:_) then
+                                   {System.showInfo ">>> A2 is app: "#{Value.toVirtualString A2 0 0}#", calling EvaluateDeep"}
+                                   {System.showInfo ">>> Creating TempProg2 with call=A2"}
+                                   local TempProg2 EvalResult2 in
+                                      TempProg2 = prog(function:Prog.function args:Prog.args body:Prog.body call:A2)
+                                      {System.showInfo ">>> TempProg2 created, calling Evaluate..."}
+                                      EvalResult2 = {Evaluate TempProg2}
+                                      {System.showInfo ">>> A2 Evaluate result: "#{Value.toVirtualString EvalResult2 0 0}}
+                                      {System.showInfo ">>> A2 Evaluate result type: "#{Value.toVirtualString {Value.type EvalResult2} 0 0}}
+                                      case EvalResult2
+                                      of leaf(num:N) then
+                                         {System.showInfo ">>> A2 Evaluate returned number: "#N}
+                                         leaf(num:N)
+                                      [] N andthen {IsInt N} then
+                                         {System.showInfo ">>> A2 Evaluate returned integer: "#N}
+                                         leaf(num:N)
+                                      [] app(function:_ arg:_) then
+                                         {System.showInfo ">>> A2 Evaluate returned app, calling EvaluateDeep on it"}
+                                         {EvaluateDeep EvalResult2 TempProg2}
+                                      [] _ then
+                                         {System.showInfo ">>> A2 Evaluate returned other type: "#{Value.toVirtualString EvalResult2 0 0}}
+                                         EvalResult2
+                                      end
+                                   end
+                                [] leaf(var:V) andthen V==Prog.function then
+                                   {System.showInfo ">>> A2 is function variable: "#{Value.toVirtualString V 0 0}#", trying to evaluate as application"}
+                                   {System.showInfo ">>> Creating TempProg2 with call=A2: "#{Value.toVirtualString A2 0 0}}
+                                   local TempProg2 EvalResult2 in
+                                      TempProg2 = prog(function:Prog.function args:Prog.args body:Prog.body call:A2)
+                                      {System.showInfo ">>> TempProg2 created: function="#{Value.toVirtualString TempProg2.function 0 0}#", call="#{Value.toVirtualString TempProg2.call 0 0}}
+                                      {System.showInfo ">>> Calling Evaluate on TempProg2..."}
+                                      EvalResult2 = {Evaluate TempProg2}
+                                      {System.showInfo ">>> A2 Evaluate result: "#{Value.toVirtualString EvalResult2 0 0}}
+                                      {System.showInfo ">>> Checking type of EvalResult2..."}
+                                      case EvalResult2
+                                      of leaf(num:N) then
+                                         {System.showInfo ">>> EvalResult2 is leaf(num): "#N#", returning leaf(num)"}
+                                         leaf(num:N)
+                                      [] N andthen {IsInt N} then
+                                         {System.showInfo ">>> EvalResult2 is integer: "#N#", returning leaf(num)"}
+                                         leaf(num:N)
+                                      [] app(function:_ arg:_) then
+                                         {System.showInfo ">>> EvalResult2 is app, calling EvaluateDeep on it"}
+                                         local DeepResult in
+                                            DeepResult = {EvaluateDeep EvalResult2 TempProg2}
+                                            {System.showInfo ">>> EvaluateDeep returned: "#{Value.toVirtualString DeepResult 0 0}}
+                                            DeepResult
+                                         end
+                                      [] leaf(var:VarName) then
+                                         {System.showInfo ">>> EvalResult2 is leaf(var) in WHNF: "#{Value.toVirtualString VarName 0 0}#", trying EvaluateDeep to see if it can be reduced further"}
+                                         local DeepResult in
+                                            DeepResult = {EvaluateDeep EvalResult2 TempProg2}
+                                            {System.showInfo ">>> EvaluateDeep on WHNF variable returned: "#{Value.toVirtualString DeepResult 0 0}}
+                                            case DeepResult
+                                            of leaf(num:N) then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to number: "#N}
+                                               leaf(num:N)
+                                            [] N andthen {IsInt N} then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to integer: "#N}
+                                               leaf(num:N)
+                                            [] app(function:_ arg:_) then
+                                               {System.showInfo ">>> EvaluateDeep converted WHNF variable to app, trying to evaluate further"}
+                                               local FurtherEval in
+                                                  FurtherEval = {Evaluate prog(function:Prog.function args:Prog.args body:Prog.body call:DeepResult)}
+                                                  {System.showInfo ">>> Further evaluation returned: "#{Value.toVirtualString FurtherEval 0 0}}
+                                                  case FurtherEval
+                                                  of leaf(num:N) then leaf(num:N)
+                                                  [] N andthen {IsInt N} then leaf(num:N)
+                                                  [] _ then DeepResult
+                                                  end
+                                               end
+                                            [] _ then
+                                               {System.showInfo ">>> EvaluateDeep could not convert WHNF variable, returning as-is"}
+                                               DeepResult
+                                            end
+                                         end
+                                      [] _ then
+                                         {System.showInfo ">>> EvalResult2 is other type: "#{Value.toVirtualString EvalResult2 0 0}#", returning as-is"}
+                                         EvalResult2
+                                      end
+                                   end
+                                [] _ then A2
+                                end
+                  {System.showInfo ">>> EvaluatedA2 final result: "#{Value.toVirtualString EvaluatedA2 0 0}}
+                  {System.showInfo ">>> About to call EvalToNum on EvaluatedA1: "#{Value.toVirtualString EvaluatedA1 0 0}}
+                  N1 = {EvalToNum EvaluatedA1 Prog}
+                  {System.showInfo ">>> EvalToNum on A1 returned: "#N1}
+                  {System.showInfo ">>> About to call EvalToNum on EvaluatedA2: "#{Value.toVirtualString EvaluatedA2 0 0}}
+                  N2 = {EvalToNum EvaluatedA2 Prog}
+                  {System.showInfo ">>> EvalToNum on A2 returned: "#N2}
                   {System.showInfo ">>> Evaluated to numbers: N1="#N1#", N2="#N2#""}
                   if Op=='rad' then
                      {System.showInfo ">>> Processing rad operation: base="#N1#", index="#N2#""}
@@ -851,7 +1099,14 @@ fun {Reduce Prog}
                catch E then
                   {System.showInfo ">>> EXCEPTION CAUGHT in primitive reduction: "#{Value.toVirtualString E 0 0}}
                   {System.showInfo ">>> Exception type: "#{Value.toVirtualString {Label E} 0 0}#""}
+                  {System.showInfo ">>> Exception details: "#{Value.toVirtualString E 0 0}}
+                  {System.showInfo ">>> A1 that caused exception: "#{Value.toVirtualString A1 0 0}}
+                  {System.showInfo ">>> A2 that caused exception: "#{Value.toVirtualString A2 0 0}}
+                  {System.showInfo ">>> EvaluatedA1 that caused exception: "#{Value.toVirtualString EvaluatedA1 0 0}}
+                  {System.showInfo ">>> EvaluatedA2 that caused exception: "#{Value.toVirtualString EvaluatedA2 0 0}}
+                  {System.showInfo ">>> Op that caused exception: "#{Value.toVirtualString Op 0 0}}
                   {System.showInfo ">>> Keeping R.root unchanged: "#{Value.toVirtualString R.root 0 0}}
+                  {System.showInfo ">>> This means the primitive operation cannot be performed with these arguments"}
                   NewNode = R.root
                end
             end         
@@ -860,9 +1115,20 @@ fun {Reduce Prog}
             NewNode = R.head
          end
 
-         {System.showInfo ">>> Replacing R.root: "#{Value.toVirtualString R.root 0 0}#" with NewNode: "#{Value.toVirtualString NewNode 0 0}}
-         NewCall = {ReplaceSub Prog.call R.root NewNode}
+         local RootToReplace in
+            if {Length R.rest} > 0 then
+               {System.showInfo ">>> Has remaining args, RootToReplace includes them: "#{Value.toVirtualString {MakeApp R.root R.rest} 0 0}}
+               RootToReplace = {MakeApp R.root R.rest}
+            else
+               {System.showInfo ">>> No remaining args, RootToReplace is R.root: "#{Value.toVirtualString R.root 0 0}}
+               RootToReplace = R.root
+            end
+            {System.showInfo ">>> Replacing RootToReplace: "#{Value.toVirtualString RootToReplace 0 0}#" with NewNode: "#{Value.toVirtualString NewNode 0 0}}
+            {System.showInfo ">>> Prog.call before ReplaceSub: "#{Value.toVirtualString Prog.call 0 0}}
+            NewCall = {ReplaceSub Prog.call RootToReplace NewNode}
+         end
          {System.showInfo ">>> NewCall after ReplaceSub: "#{Value.toVirtualString NewCall 0 0}}
+         {System.showInfo ">>> Creating new prog with NewCall"}
          prog(function:Prog.function args:Prog.args body:Prog.body call:NewCall)
       end
    end
@@ -900,15 +1166,17 @@ fun {Evaluate Prog}
                   [] _ then
                      {System.showInfo ">>> Returning ProgCall as-is: "#{Value.toVirtualString ProgCall 0 0}}
                      ProgCall
-                  end
-               else
+               end
+            else
                   {System.showInfo ">>> Pnext.call != Prog.call, recursively evaluating"}
-                  {Evaluate Pnext}
+               {Evaluate Pnext}
                end
             end         
 
          elseif R.status == whnf then
             {System.showInfo ">>> Status is whnf, handling WHNF case"}
+            {System.showInfo ">>> WHNF: Head arity: "#{Value.toVirtualString R.arity 0 0}#", AllArgs length: "#{Length R.allargs}}
+            {System.showInfo ">>> WHNF: Head: "#{Value.toVirtualString R.head 0 0}#", Kind: "#{Value.toVirtualString R.kind 0 0}}
             local Normal in
                case Prog.call
                of var(bindings:Bs body:B) then
@@ -916,9 +1184,11 @@ fun {Evaluate Prog}
                   Normal = {EvalVarBindings Bs B Prog}
                   {System.showInfo ">>> EvalVarBindings returned: "#{Value.toVirtualString Normal 0 0}}
                [] _ then
-                  {System.showInfo ">>> Call is not var, calling EvaluateDeep"}
+                  {System.showInfo ">>> Call is not var, calling EvaluateDeep on: "#{Value.toVirtualString Prog.call 0 0}}
+                  {System.showInfo ">>> EvaluateDeep will try to evaluate sub-expressions"}
                   Normal = {EvaluateDeep Prog.call Prog}
                   {System.showInfo ">>> EvaluateDeep returned: "#{Value.toVirtualString Normal 0 0}}
+                  {System.showInfo ">>> Normal type check: "#{Value.toVirtualString {Value.type Normal} 0 0}}
                end
          
                local NormalCall ProgCall in
@@ -968,18 +1238,26 @@ fun {EvaluateDeep Expr Prog}
    of leaf(num:N) then
       {System.showInfo ">>> EvaluateDeep: Expr is number, returning"}
       Expr
-   [] leaf(var:_) then
-      {System.showInfo ">>> EvaluateDeep: Expr is variable, returning as-is"}
+   [] leaf(var:V) then
+      {System.showInfo ">>> EvaluateDeep: Expr is variable: "#{Value.toVirtualString V 0 0}#", returning as-is"}
+      {System.showInfo ">>> EvaluateDeep: Variable cannot be evaluated further without context"}
       Expr
    [] app(function:F arg:A) then
       {System.showInfo ">>> EvaluateDeep: Expr is app, evaluating F and A"}
+      {System.showInfo ">>> F (function part): "#{Value.toVirtualString F 0 0}}
+      {System.showInfo ">>> A (argument part): "#{Value.toVirtualString A 0 0}}
       local EvaluatedF EvaluatedA Combined in
+         {System.showInfo ">>> EvaluateDeep: About to evaluate F: "#{Value.toVirtualString F 0 0}}
          EvaluatedF = {EvaluateDeep F Prog}
-         {System.showInfo ">>> EvaluatedF: "#{Value.toVirtualString EvaluatedF 0 0}}
+         {System.showInfo ">>> EvaluatedF result: "#{Value.toVirtualString EvaluatedF 0 0}}
+         {System.showInfo ">>> EvaluatedF type: "#{Value.toVirtualString {Value.type EvaluatedF} 0 0}}
+         {System.showInfo ">>> EvaluateDeep: About to evaluate A: "#{Value.toVirtualString A 0 0}}
          EvaluatedA = {EvaluateDeep A Prog}
-         {System.showInfo ">>> EvaluatedA: "#{Value.toVirtualString EvaluatedA 0 0}}
+         {System.showInfo ">>> EvaluatedA result: "#{Value.toVirtualString EvaluatedA 0 0}}
+         {System.showInfo ">>> EvaluatedA type: "#{Value.toVirtualString {Value.type EvaluatedA} 0 0}}
          Combined = app(function:EvaluatedF arg:EvaluatedA)
-         {System.showInfo ">>> Combined: "#{Value.toVirtualString Combined 0 0}}
+         {System.showInfo ">>> Combined expression: "#{Value.toVirtualString Combined 0 0}}
+         {System.showInfo ">>> Checking if Combined can be reduced further"}
          local TempProg R Reduced in
             TempProg = prog(function:Prog.function args:Prog.args body:Prog.body call:Combined)
             R = {NextReduction TempProg}
@@ -1024,7 +1302,7 @@ fun {EvaluateDeep Expr Prog}
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-%% 🔥🔥🔥 SUPER TEST CASE ULTRA COMPLETO
+%%   TESTS
 %%   Cubre: + - * /, var, nested var, múltiples parámetros,
 %%          WHNF, stuck, infix/prefix, parentheses,
 %%          overapplication, underapplication, combinaciones,
@@ -1067,9 +1345,9 @@ end
       {PrintResult {Evaluate P4}}
    end
    
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 2. Supercombinators multi-parámetro
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % 2. Supercombinators multi-parámetro
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
    {System.showInfo "TEST S5: fun add3 a b c = a + b + c"}
    local P5 in
@@ -1124,7 +1402,7 @@ end
    end
    
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 5. Function calls nested arbitrarily
+   %% 5. Function calls nested arbitrarily (REVISARRRRR)
    %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
    {System.showInfo "TEST S12: cascaded calls f (f (f 3))"}
@@ -1133,9 +1411,9 @@ end
       {PrintResult {Evaluate P12}}  %% (((f f) f) 3)
    end
    
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 6. Division edge cases
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % 6. Division edge cases
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
    {System.showInfo "TEST S13: division by zero handoff (should remain stuck)"}
    local P13 in
@@ -1149,9 +1427,9 @@ end
       {PrintResult {Evaluate P14}}   %% WHNF for y
    end
    
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 7. Complex infix + prefix mix
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % 7. Complex infix + prefix mix
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
    {System.showInfo "TEST S15: prefix operator-style: + 3 5"}
    local P15 in
@@ -1203,9 +1481,9 @@ end
       {PrintResult {Evaluate P21}}
    end
    
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-   %% 10. Stress test: monstrous nested ops
-   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+   % 10. Stress test: monstrous nested ops
+   %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
    
    {System.showInfo "TEST S22: MONSTER EXPRESSION"}
    local P22 in
