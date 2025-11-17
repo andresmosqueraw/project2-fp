@@ -220,7 +220,7 @@ fun {BuildExpr Tokens}
                end
             end
             
-            fun {ProcessTokens Ts Acc}
+      fun {ProcessTokens Ts Acc}
                case Ts
                of nil then {List.reverse Acc}
                [] '('|Tr then
@@ -236,9 +236,9 @@ fun {BuildExpr Tokens}
                [] T|Tr then
                   {ProcessTokens Tr T|Acc}
                end
-            end
-         in
-            {ProcessTokens Tokens nil}
+      end
+   in
+      {ProcessTokens Ts nil}
          end
       end
       
@@ -1043,50 +1043,68 @@ local P29 R29 in
 end
 
 {System.showInfo "\n=== TEST F5: fully parenthesized nested calls ==="}
-local P30 R30 in
+local P30 R30 ResultVS30 TypeVS30 in
    P30 = {GraphGeneration "fun square x = x * x\n(square (square (square 2)))"}
    R30 = {Evaluate P30}
-   {System.showInfo "Result: "#R30#" (Expected: square(square(square(2))) = square(square(4)) = square(16) = 256)"}
+   ResultVS30 = {Value.toVirtualString R30 0 0}
+   TypeVS30   = {Atom.toString {Value.type R30}}
+   {System.showInfo "F5 Debug -> type: "#TypeVS30#", value: "#ResultVS30}
+   {System.showInfo "Result: "#ResultVS30#" (Expected: square(square(square(2))) = square(square(4)) = square(16) = 256)"}
 end
 
 {System.showInfo "\n=== TEST F6: deep nested self-calls ==="}
-local P31 R31 in
+local P31 R31 ResultVS31 TypeVS31 in
    P31 = {GraphGeneration "fun inc x = x + 1\ninc (inc (inc (inc 5)))"}
    R31 = {Evaluate P31}
-   {System.showInfo "Result: "#R31#" (Expected: 5+1+1+1+1 = 9)"}
+   ResultVS31 = {Value.toVirtualString R31 0 0}
+   TypeVS31   = {Atom.toString {Value.type R31}}
+   {System.showInfo "F6 Debug -> type: "#TypeVS31#", value: "#ResultVS31}
+   {System.showInfo "Result: "#ResultVS31#" (Expected: 5+1+1+1+1 = 9)"}
 end
 
 {System.showInfo "\n=== TEST F7: mixed nested calls ==="}
-local P32 R32 in
+local P32 R32 ResultVS32 TypeVS32 in
    P32 = {GraphGeneration "fun f x = x * 2\nf (f 3) (f 4)"}
    R32 = {Evaluate P32}
-   {System.showInfo "Result: "#{Value.toVirtualString R32 0 0}#" (Expected: stuck - overapplication, f only takes 1 arg)"}
+   ResultVS32 = {Value.toVirtualString R32 0 0}
+   TypeVS32   = {Atom.toString {Value.type R32}}
+   {System.showInfo "F7 Debug -> type: "#TypeVS32#", value: "#ResultVS32}
+   {System.showInfo "Result: "#ResultVS32#" (Expected: stuck - overapplication, f only takes 1 arg)"}
 end
 
 {System.showInfo "\n=== TEST F8: simulated composition f(g(h x)) ==="}
-local P33 R33 in
+local P33 R33 ResultVS33 TypeVS33 in
    P33 = {GraphGeneration "fun comp x = ( (x+1) * 2 ) * 3\ncomp 5"}
    R33 = {Evaluate P33}
-   {System.showInfo "Result: "#R33#" (Expected: (6 * 2)*3 = 36)"}
+   ResultVS33 = {Value.toVirtualString R33 0 0}
+   TypeVS33   = {Atom.toString {Value.type R33}}
+   {System.showInfo "F8 Debug -> type: "#TypeVS33#", value: "#ResultVS33}
+   {System.showInfo "Result: "#ResultVS33#" (Expected: (6 * 2)*3 = 36)"}
 end
 
 {System.showInfo "\n=== TEST F9: nested call inside var binding ==="}
-local P34 R34 in
-   P34 = {GraphGeneration "fun f x = var y = x * x in (y + y) + f 1"}
+local P34 R34 ResultVS34 TypeVS34 in
+   P34 = {GraphGeneration "fun f x = var y = x * x in (y + y) + f 1\nf 1"}
    try
       R34 = {Evaluate P34}
-      {System.showInfo "Result: "#R34#" (Expected: infinite recursion or stuck)"}
+      ResultVS34 = {Value.toVirtualString R34 0 0}
+      TypeVS34   = {Atom.toString {Value.type R34}}
+      {System.showInfo "F9 Debug -> type: "#TypeVS34#", value: "#ResultVS34}
+      {System.showInfo "Result: "#ResultVS34#" (Expected: infinite recursion or stuck)"}
    catch E then
       {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}}
    end
 end
 
 {System.showInfo "\n=== TEST F10: nested calls + shadowing ==="}
-local P35 R35 in
-   P35 = {GraphGeneration "fun sh x = var x = x + 1 in sh x"}
+local P35 R35 ResultVS35 TypeVS35 in
+   P35 = {GraphGeneration "fun sh x = var x = x + 1 in sh x\nsh 1"}
    try
       R35 = {Evaluate P35}
-      {System.showInfo "Result: "#R35#" (Expected: infinite loop or stuck)"}
+      ResultVS35 = {Value.toVirtualString R35 0 0}
+      TypeVS35   = {Atom.toString {Value.type R35}}
+      {System.showInfo "F10 Debug -> type: "#TypeVS35#", value: "#ResultVS35}
+      {System.showInfo "Result: "#ResultVS35#" (Expected: infinite loop or stuck)"}
    catch E then
       {System.showInfo "Error caught: "#{Value.toVirtualString E 0 0}}
    end
